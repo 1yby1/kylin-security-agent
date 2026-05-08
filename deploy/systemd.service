@@ -1,0 +1,30 @@
+[Unit]
+Description=Software Cup Ops Assistant
+After=network.target
+
+[Service]
+Type=simple
+User=software-cup-agent
+Group=software-cup-agent
+WorkingDirectory=/opt/software-cup-ops
+Environment=AGENT_RUN_USER=software-cup-agent
+Environment=AGENT_RUN_GROUP=software-cup-agent
+Environment=AGENT_STRICT_LEAST_PRIVILEGE=true
+Environment=AGENT_SAFE_WORKDIR=/
+Environment=AGENT_DB_PATH=/var/lib/software-cup-ops/app.db
+Environment=AGENT_AUDIT_LOG_PATH=/var/log/software-cup-ops/audit.log
+ExecStart=/opt/software-cup-ops/.venv/bin/uvicorn backend.main:app --host 0.0.0.0 --port 8000
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/software-cup-ops /var/log/software-cup-ops /opt/software-cup-ops/tmp
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

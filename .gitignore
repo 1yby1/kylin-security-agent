@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+.venv/
+node_modules/
+dist/
+*.log
+backend/database/*.db
+backend/audit/logs/
+.claude/
+.agents/skills/ui-ux-pro-max/
+.agents/**/__pycache__/

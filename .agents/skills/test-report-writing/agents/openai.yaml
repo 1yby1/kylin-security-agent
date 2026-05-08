@@ -1,0 +1,5 @@
+interface:
+  display_name: "测试报告编写"
+  short_description: "Create functional and performance test reports."
+  default_prompt: "Use $test-report-writing to create functional and performance test reports for this safety operations Agent project."
+
