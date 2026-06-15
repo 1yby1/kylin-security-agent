@@ -17,6 +17,12 @@ SAFE_TEMP_DIRS = (
     "/opt/software-cup-ops/tmp",
 )
 
+SAFE_LOG_DIRS = (
+    "/var/log",
+    "/var/log/software-cup-ops",
+    "/opt/software-cup-ops/logs",
+)
+
 CORE_SYSTEM_PATHS = (
     "/",
     "/etc",

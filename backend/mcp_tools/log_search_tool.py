@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 from typing import Any
 
 from backend.mcp_tools.command_runner import run_optional_template
-from backend.mcp_tools.log_tool import _analyze_logs
+from backend.mcp_tools.log_tool import _analyze_logs, resolve_log_path
 
 
 def run(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -36,9 +35,9 @@ def _search_file(
     if not log_path:
         return {"error": "log_path is required when source=file"}
 
-    path = Path(log_path).expanduser()
-    if not path.exists() or not path.is_file():
-        return {"error": f"log file not found: {path}"}
+    path, error = resolve_log_path(log_path)
+    if error:
+        return {"error": error}
 
     content = path.read_text(encoding="utf-8", errors="ignore").splitlines()
     scanned = content[-lines:]

@@ -6,6 +6,7 @@ import unittest
 
 from backend.agent.orchestrator import AgentOrchestrator
 from backend.agent.planner import Plan
+from backend.mcp_tools.log_tool import run as run_log
 from backend.mcp_tools.log_search_tool import run as run_log_search
 from backend.mcp_tools.network_port_lookup_tool import _find_port_matches
 from backend.mcp_tools.process_detail_tool import _analyze_process_detail
@@ -15,10 +16,16 @@ from backend.mcp_tools.process_top_tool import _parse_process_rows
 class GranularToolTests(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
+        self._old_allowed_log_dirs = os.environ.get("AGENT_ALLOWED_LOG_DIRS")
         os.environ["AGENT_AUDIT_LOG_PATH"] = os.path.join(self._tmp.name, "audit.log")
+        os.environ["AGENT_ALLOWED_LOG_DIRS"] = self._tmp.name
         self.agent = AgentOrchestrator()
 
     def tearDown(self) -> None:
+        if self._old_allowed_log_dirs is None:
+            os.environ.pop("AGENT_ALLOWED_LOG_DIRS", None)
+        else:
+            os.environ["AGENT_ALLOWED_LOG_DIRS"] = self._old_allowed_log_dirs
         self._tmp.cleanup()
 
     def test_process_top_parser_orders_cpu_and_memory_inputs(self) -> None:
@@ -114,6 +121,25 @@ class GranularToolTests(unittest.TestCase):
         self.assertEqual(result["matches"][0]["line_number"], 2)
         self.assertIn("failed to connect", result["matches"][0]["line"])
         self.assertTrue(result["analysis"]["matched"])
+
+    def test_log_file_tools_reject_paths_outside_allowed_dirs(self) -> None:
+        outside = tempfile.TemporaryDirectory()
+        self.addCleanup(outside.cleanup)
+        log_file = os.path.join(outside.name, "secret.log")
+        with open(log_file, "w", encoding="utf-8") as handle:
+            handle.write("secret token should not be readable\n")
+
+        log_result = run_log({"source": "file", "log_path": log_file})
+        search_result = run_log_search(
+            {
+                "source": "file",
+                "log_path": log_file,
+                "keyword": "secret",
+            }
+        )
+
+        self.assertIn("outside allowed log directories", log_result["error"])
+        self.assertIn("outside allowed log directories", search_result["error"])
 
     def test_granular_tools_are_registered_as_low_risk(self) -> None:
         tools = self.agent.executor.available_tools()
