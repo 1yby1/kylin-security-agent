@@ -1,29 +1,34 @@
-# Architecture
+# 架构说明
 
-## Tech stack
+本文档说明软件杯智能运维 Agent 的核心架构、运行链路和关键约束。
 
-- Frontend: Vue 3 now, React can be swapped later if the team prefers it.
-- Backend: Python FastAPI.
-- Agent scheduler: Python planner and executor modules.
-- MCP tool layer: Python function wrappers for system overview, process analysis, network ports, logs, and services.
-- Database: SQLite for the first version, PostgreSQL later.
-- LLM: DeepSeek or Qwen through API first, local deployment later.
-- System commands: `subprocess` through whitelisted command templates only.
-- Deployment target: Kylin Advanced Server V11 on LoongArch.
+## 技术栈
 
-## Runtime flow
+- 前端：静态 Vue 3 页面，当前通过 CDN 加载 Vue。
+- 后端：Python FastAPI。
+- Agent 调度：Python Planner、Executor 和 Orchestrator 模块。
+- MCP-like 工具层：Python 工具函数封装系统概览、进程、端口、日志、服务和磁盘诊断能力。
+- 数据库：当前使用 SQLite 初始化基础表，后续可扩展到 PostgreSQL。
+- 审计日志：JSONL 文件，按 `trace_id` 串联全链路事件。
+- 大模型：优先通过 DeepSeek 或 Qwen API 接入，后续可评估本地部署。
+- 系统命令：只能通过白名单命令模板调用 `subprocess`。
+- 部署目标：麒麟高级服务器 V11，LoongArch 架构。
 
-1. The Vue UI sends a user request to `POST /api/agent/execute`.
-2. `backend.agent.planner.Planner` chooses intent and tools.
-3. If `LLM_PROVIDER`, API key, and model settings are configured, the planner calls DeepSeek/Qwen.
-4. If the LLM call is unavailable, the planner uses local keyword rules.
-5. `backend.security.guard.SecurityGuard` blocks dangerous requests.
-6. `backend.security.permission.PermissionPolicy` asks for approval for risky intent.
-7. `backend.agent.executor.ToolExecutor` calls whitelisted Python tool functions.
-8. Tool functions call `command_runner.run_template()` for approved system commands.
-9. `backend.audit.logger.AuditLogger` writes JSONL audit records.
+## 运行链路
 
-## LLM environment variables
+1. 前端向 `POST /api/agent/execute` 提交用户运维请求。
+2. `backend.agent.planner.Planner` 选择意图、工具和参数。
+3. 如果配置了 `LLM_PROVIDER`、API Key 和模型参数，Planner 会调用 DeepSeek/Qwen 生成固定 JSON 规划。
+4. 如果 LLM 不可用、返回异常或返回非 JSON，Planner 使用本地关键词规则兜底。
+5. `backend.security.guard.SecurityGuard` 执行工具白名单、参数 schema、参数值、危险路径、危险命令、角色权限、二次确认和审计要求校验。
+6. `backend.agent.executor.ToolExecutor` 在安全校验通过后调用注册工具。
+7. 工具函数通过 `backend/mcp_tools/command_runner.py` 中的命令模板执行允许的系统命令。
+8. `backend.agent.llm_client.LLMClient.conclude()` 或本地兜底逻辑生成结构化结论。
+9. `backend.audit.logger.AuditLogger` 写入 JSONL 审计事件。
+
+## LLM 环境变量
+
+DeepSeek 示例：
 
 ```bash
 export LLM_PROVIDER=deepseek
@@ -31,7 +36,7 @@ export DEEPSEEK_API_KEY=...
 export LLM_MODEL=deepseek-chat
 ```
 
-or:
+Qwen 示例：
 
 ```bash
 export LLM_PROVIDER=qwen
@@ -39,7 +44,7 @@ export QWEN_API_KEY=...
 export LLM_MODEL=qwen-plus
 ```
 
-Common overrides:
+通用覆盖项：
 
 ```bash
 export LLM_API_KEY=...
@@ -47,50 +52,120 @@ export LLM_BASE_URL=...
 export LLM_TIMEOUT_SECONDS=20
 ```
 
-## Command whitelist
+## 命令白名单
 
-Command templates live in `backend/mcp_tools/command_runner.py`.
-New commands should be added as named templates, not built from free-form user text.
+命令模板集中在 `backend/mcp_tools/command_runner.py`。
 
-## Stage 1: system perception tools
+新增系统命令时必须添加具名模板，并通过参数校验渲染；不能从用户输入拼接 shell 字符串，也不能在工具中直接调用 `subprocess`。
 
-See `docs/system-perception-tools.md`.
+## 工具注册
 
-## Stage 2: MCP tool registration
+工具元数据和 handler 在 `backend/mcp_tools/builtin.py` 中通过 `ToolRegistry` 注册。
 
-Tool metadata and handlers are registered in `backend/mcp_tools/builtin.py`
-through `ToolRegistry`. FastAPI exposes an MCP-like manifest at
-`GET /api/mcp/tools`.
+FastAPI 通过 `GET /api/mcp/tools` 暴露 MCP-like manifest，包含工具名称、描述、分类、参数 schema、命令模板、风险等级和是否只读。
 
-## Stage 3: security intent validation
+当前工具分为两类：
 
-Every execution passes through `backend/security/guard.py` before a tool handler
-is called. The validator checks tool whitelist, parameter schema, parameter
-values, dangerous paths, dangerous commands, user permissions, secondary
-confirmation, and audit logging. See `docs/security-intent-validator.md`.
+- 只读感知工具：`system`、`process`、`process.top`、`process.detail`、`network`、`network.port_lookup`、`log`、`log.search`、`service`、`disk`。
+- 受控操作工具：`service.restart`、`temp.clean`、`process.kill`。
 
-## Stage 4: least privilege execution
+## 安全策略
 
-Production deployment runs the service as `software-cup-agent` instead of root.
-The command runner records execution identity for every subprocess and refuses
-strict root execution when the dedicated low-privilege user is missing. See
-`docs/least-privilege-execution.md`.
+所有工具调用都必须先经过 `backend/security/guard.py`。
 
-## Stage 5: LLM JSON contract
+安全校验包括：
 
-DeepSeek/Qwen is used through a fixed JSON contract: planning JSON selects
-intent, tools, and arguments; analysis JSON turns tool results into user-facing
-conclusions. Backend security and execution remain authoritative. See
-`docs/llm-agent-json-contract.md`.
+- 工具是否注册且启用。
+- 工具参数是否满足 schema。
+- 参数字符串是否包含危险字符。
+- 清理、删除、写入等场景是否触碰危险路径。
+- 文件日志读取是否位于允许日志目录内。
+- 请求是否匹配禁止或危险命令模式。
+- 用户角色是否允许执行当前风险等级操作。
+- 中高风险操作是否完成二次确认。
 
-## Stage 6: audit tracing
+风险等级为 `low`、`medium`、`high`、`prohibited`。工具定义中的 `risk_level` 和 `backend/security/rules.py` 中的 `RISK_POLICIES` 是后端权威策略；LLM 返回的 `risk_hint` 只作为规划信息，不能替代后端安全判断。
 
-Every user request receives a `trace_id` and writes JSONL audit events for
-instruction receipt, LLM decision, security validation, tool calls, environment
-perception, execution result, and final answer. See `docs/audit-tracing.md`.
+`log` 和 `log.search` 在 `source=file` 模式下只允许读取 `SAFE_LOG_DIRS` 内的普通日志文件。部署时如需扩展目录，可通过 `AGENT_ALLOWED_LOG_DIRS` 设置允许目录列表。
 
-## Controlled operations
+## 最小权限执行
 
-Medium-risk tools such as `service.restart` are registered as MCP-like tools but
-require security validation, operator/admin role, and secondary confirmation.
-See `docs/controlled-operation-tools.md`.
+生产环境应以 `software-cup-agent` 低权限用户运行服务，不应使用 root 直接运行。
+
+`backend/security/least_privilege.py` 会在 Linux 环境中记录当前执行身份，并在满足条件时将子进程降权到目标用户。`AGENT_STRICT_LEAST_PRIVILEGE=true` 时，如果 root 进程无法解析目标低权限用户，会拒绝启动系统命令。
+
+相关配置：
+
+```bash
+export AGENT_RUN_USER=software-cup-agent
+export AGENT_RUN_GROUP=software-cup-agent
+export AGENT_SAFE_WORKDIR=/
+export AGENT_STRICT_LEAST_PRIVILEGE=true
+```
+
+## LLM JSON 合约
+
+规划阶段固定返回：
+
+```json
+{
+  "intent": "inspection|diagnosis|risky_operation",
+  "summary": "一句话描述用户意图",
+  "tools": ["工具名称"],
+  "arguments": {},
+  "arguments_by_tool": {},
+  "risk_hint": "low|medium|high|prohibited",
+  "need_confirmation": false,
+  "reasoning": ["简短规划理由"]
+}
+```
+
+分析阶段固定返回：
+
+```json
+{
+  "conclusion": "最终结论",
+  "status": "normal|warning|critical|unknown",
+  "root_cause": "根因或无法确认",
+  "evidence": ["关键证据"],
+  "recommendations": ["建议"],
+  "needs_more_info": false,
+  "follow_up_questions": []
+}
+```
+
+后端必须容忍 LLM 不可用、非 JSON、缺少 `response_format` 支持和代码块包裹 JSON 的情况，并回退到本地规则。
+
+## 审计追踪
+
+每个用户请求都会生成一个 `trace_id`。审计事件默认写入 `backend/audit/logs/audit.log`，可通过 `AGENT_AUDIT_LOG_PATH` 覆盖。
+
+当前审计阶段包括：
+
+- `received_instruction`
+- `llm_decision`
+- `security_validation`
+- `tool_call`
+- `environment_perception`
+- `execution_result`
+- `final_answer`
+- `trace_complete`
+
+## 关键约束
+
+- 工具执行顺序必须保持为：规划 -> 安全校验 -> 工具执行 -> 结果总结 -> 审计闭环。
+- 所有 shell 访问必须走 `run_template()` 或 `run_optional_template()`。
+- Windows 和 Linux 命令模板不同，新增工具时需要保留平台判断。
+- 中风险工具必须要求 operator/admin 角色和二次确认。
+- 高风险和禁止操作不能仅凭 LLM 或前端确认放行。
+- 修改某一阶段逻辑前，应先阅读 `docs/` 下对应设计文档。
+
+## 相关设计文档
+
+- `docs/system-perception-tools.md`：系统感知工具。
+- `docs/mcp-tool-registration.md`：MCP-like 工具注册。
+- `docs/security-intent-validator.md`：安全意图校验。
+- `docs/least-privilege-execution.md`：最小权限执行。
+- `docs/llm-agent-json-contract.md`：LLM JSON 合约。
+- `docs/audit-tracing.md`：全链路审计。
+- `docs/controlled-operation-tools.md`：受控操作工具。
