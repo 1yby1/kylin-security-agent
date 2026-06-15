@@ -1,35 +1,124 @@
 # Software Cup Ops Assistant
 
-This repository contains a first-pass architecture for an AI-assisted
-operations diagnosis system using Vue 3, FastAPI, Python agent scheduling,
-SQLite, and whitelisted `subprocess` command templates.
+软件杯智能运维 Agent 原型项目。系统接收自然语言运维问题，调用
+DeepSeek/Qwen 或本地规则完成意图规划，再通过后端安全校验执行白名单
+工具，最终返回结构化诊断结论和完整审计链路。
 
-## Structure
+本项目面向麒麟高级服务器 V11 与 LoongArch 部署场景，开发环境可在
+Windows 上运行。所有系统命令必须通过后端命令模板执行，不能直接拼接
+用户输入。
 
-- `frontend/`: Web UI for submitting diagnosis requests.
-- `backend/main.py`: FastAPI entry point.
-- `backend/agent/`: Intent planning, tool selection, and execution dispatch.
-- `backend/mcp_tools/`: Local diagnostic tools.
-- `backend/security/`: Dangerous command detection and approval policy.
-- `backend/audit/`: Audit record models and JSONL logger.
-- `backend/database/`: SQLite bootstrap.
-- `deploy/`: Install script and systemd service template.
-- `ARCHITECTURE.md`: Tech stack, runtime flow, LLM configuration, and command whitelist notes.
-- `docs/system-perception-tools.md`: Stage 1 system perception tool design and API examples.
-- `docs/mcp-tool-registration.md`: Stage 2 MCP-like tool registry and discovery APIs.
-- `docs/security-intent-validator.md`: Stage 3 risk levels, checks, and security APIs.
-- `docs/least-privilege-execution.md`: Stage 4 dedicated user, systemd hardening, and subprocess identity control.
-- `docs/llm-agent-json-contract.md`: Stage 5 DeepSeek/Qwen fixed JSON planning and result analysis contract.
-- `docs/audit-tracing.md`: Stage 6 full-chain trace audit logging.
-- `docs/controlled-operation-tools.md`: Controlled medium-risk MCP operation tools.
+## 核心能力
 
-## Run
+- 智能运维对话：提交自然语言排查请求并返回诊断结论。
+- MCP-like 工具注册：统一暴露工具名称、参数 schema、风险等级和命令模板。
+- 系统感知工具：系统概览、进程、端口、日志、服务、磁盘等只读诊断。
+- 受控操作工具：服务重启、临时目录清理、进程终止等中风险操作。
+- 安全校验链路：工具白名单、参数 schema、危险路径、危险命令、角色权限和二次确认。
+- 审计追踪：按 `trace_id` 记录请求、规划、安全校验、工具调用、执行结果和最终回答。
+- 前端页面：智能对话、系统看板、MCP 工具列表、审计日志查询。
+
+## 目录结构
+
+- `frontend/`：静态 Vue 3 前端页面。
+- `backend/main.py`：FastAPI 应用入口。
+- `backend/agent/`：规划、调度、执行和结果总结。
+- `backend/mcp_tools/`：本地诊断工具和命令模板。
+- `backend/security/`：安全规则、权限策略和最小权限执行。
+- `backend/audit/`：JSONL 审计日志模型和读写逻辑。
+- `backend/database/`：SQLite 初始化逻辑。
+- `deploy/`：Linux/Kylin 部署脚本和 systemd 服务模板。
+- `docs/`：阶段设计文档、测试报告和项目状态说明。
+- `tests/`：Python `unittest` 回归测试。
+
+## 本地运行
+
+安装依赖：
 
 ```bash
 pip install -r requirements.txt
+```
+
+启动后端和静态前端：
+
+```bash
 uvicorn backend.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-Set `LLM_PROVIDER=deepseek` or `LLM_PROVIDER=qwen` plus the matching API key
-to enable model-based planning. Without those variables the backend uses the
-local fallback planner.
+打开：
+
+```text
+http://localhost:8000
+```
+
+未配置大模型时，系统会自动使用本地关键词规则完成规划。
+
+## 大模型配置
+
+DeepSeek 示例：
+
+```bash
+export LLM_PROVIDER=deepseek
+export DEEPSEEK_API_KEY=your_api_key
+export LLM_MODEL=deepseek-chat
+```
+
+Qwen 示例：
+
+```bash
+export LLM_PROVIDER=qwen
+export QWEN_API_KEY=your_api_key
+export LLM_MODEL=qwen-plus
+```
+
+可选通用配置：
+
+```bash
+export LLM_API_KEY=your_api_key
+export LLM_BASE_URL=https://example.com/chat/completions
+export LLM_TIMEOUT_SECONDS=20
+```
+
+## 测试
+
+默认测试入口：
+
+```bash
+python -m unittest discover -v
+```
+
+测试包会禁用真实 LLM 环境变量，避免单元测试误触发外部 API 调用。
+
+## 主要 API
+
+- `POST /api/agent/execute`：完整 Agent 执行链路。
+- `POST /api/agent/plan`：只生成规划，不执行工具。
+- `POST /api/security/evaluate`：只执行安全校验。
+- `GET /api/mcp/tools`：查看 MCP-like 工具 manifest。
+- `POST /api/tools/{tool_name}`：直接调用指定工具，仍会经过安全校验。
+- `GET /api/audit/recent`：查询最近审计事件。
+- `GET /api/llm/status`：查看 LLM 配置和可用状态。
+- `GET /api/security/runtime`：查看运行身份和最小权限状态。
+
+## 部署
+
+服务器部署说明见：
+
+```text
+deploy/README.md
+```
+
+生产环境建议通过 `software-cup-agent` 低权限用户运行 systemd 服务，并将
+状态、日志和临时目录限制到部署文档中声明的路径。
+
+## 设计文档
+
+- `ARCHITECTURE.md`：整体架构、运行流和关键约束。
+- `docs/system-perception-tools.md`：系统感知工具设计。
+- `docs/mcp-tool-registration.md`：MCP-like 工具注册设计。
+- `docs/security-intent-validator.md`：安全意图校验设计。
+- `docs/least-privilege-execution.md`：最小权限执行设计。
+- `docs/llm-agent-json-contract.md`：LLM 固定 JSON 合约。
+- `docs/audit-tracing.md`：全链路审计追踪。
+- `docs/controlled-operation-tools.md`：受控操作工具设计。
+- `docs/project-status.md`：当前已实现能力和后续扩展计划。
