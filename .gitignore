@@ -7,5 +7,5 @@ dist/
 backend/database/*.db
 backend/audit/logs/
 .claude/
-.agents/skills/ui-ux-pro-max/
+.agents/skills/
 .agents/**/__pycache__/
