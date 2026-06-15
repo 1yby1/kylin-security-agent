@@ -1,5 +1,0 @@
-interface:
-  display_name: "MCP Tool 开发"
-  short_description: "Reusable workflow for project MCP tool modules."
-  default_prompt: "Use $mcp-tool-development to add or revise an MCP tool in this project with registry metadata, security checks, and tests."
-
