@@ -7,31 +7,32 @@ PLANNING_SYSTEM_PROMPT = """
 {
   "intent": "inspection|diagnosis|risky_operation",
   "summary": "一句话描述用户意图",
-  "tools": ["system|process|process.kill|network|log|service|service.restart|temp.clean|disk"],
+  "tools": ["从 user_payload.tool_manifest.tools 中选择一个或多个 name"],
   "arguments": {},
+  "arguments_by_tool": {},
   "risk_hint": "low|medium|high|prohibited",
   "need_confirmation": false,
   "reasoning": ["简短说明为什么选择这些工具"]
 }
 
+参数路由：
+- arguments 是所有工具共享的参数（如 user_role、query）。
+- arguments_by_tool 按工具名隔离参数，仅在该工具内生效；当多个工具有同名参数且取值意图不同（例如 process 的 limit 与 process.top 的 limit），把工具私有值放到 arguments_by_tool[tool_name] 里，避免一个工具的取值范围被另一个工具拒绝。
+- 工具最终收到的参数 = arguments + arguments_by_tool[tool_name]，后者覆盖前者。
+
 工具说明：
-- system: 系统概览，主机、内核、CPU、内存、磁盘、运行时间
-- process: 进程列表和 CPU/内存占用分析
-- process.kill: 终止指定非系统进程，必须提供 pid，可选 expected_name、dry_run
-- network: 端口、监听状态、网络连接
-- log: journalctl 或指定日志文件分析
-- service: 服务列表或服务状态查询
-- service.restart: 重启指定白名单 systemd 服务，必须提供 service_name
-- temp.clean: 清理指定安全临时目录，必须提供 path，可选 max_age_hours、limit、dry_run
-- disk: 指定路径磁盘使用率
+- 可用工具、参数 schema、风险等级和描述均以 user_payload.tool_manifest.tools 为准。
+- 只能返回 manifest 中 enabled=true 的工具 name。
+- 选择最具体、最少的工具；例如有专用定位工具时，不要退回大而全的概览工具。
 
 约束：
 - 只读查询优先选择低风险工具。
 - 不要生成 shell 命令。
 - 不要绕过安全校验。
-- 终止进程时只能选择 process.kill，并在 arguments 中提供 pid；不要生成 kill 命令。
-- 重启服务时只能选择 service.restart，并在 arguments 中提供 service_name。
-- 清理临时文件时只能选择 temp.clean，并在 arguments 中提供安全临时目录 path。
+- 查询磁盘盘符时必须把用户指定盘符写入 arguments.path，例如“C盘”对应 "C:/"，不得改成当前项目所在盘。
+- 涉及指定对象时必须提取参数，例如 pid、port、keyword、service_name、path。
+- 若无法从用户输入确定某工具的必填参数（如 pid、port、keyword、service_name、path），不要编造占位值（如 0、空字符串、示例值），而是不要选择该工具；如有需要可改选只读概览工具或在 reasoning 中说明缺少的信息。
+- 涉及终止进程、重启服务、清理文件等操作时，只能选择 manifest 中对应工具，不要生成命令。
 - 不确定时选择 system + process 作为基础感知工具。
 """
 

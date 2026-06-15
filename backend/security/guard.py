@@ -6,14 +6,12 @@ from dataclasses import asdict, dataclass, field
 from pathlib import PurePosixPath
 from typing import Any
 
+from backend.agent.planner import Plan
 from backend.mcp_tools import ToolRegistry
 from backend.security.rules import (
     ADMIN_ROLES,
     CORE_SYSTEM_PATHS,
     DANGEROUS_COMMAND_PATTERNS,
-    HIGH_RISK_TOOLS,
-    LOW_RISK_TOOLS,
-    MEDIUM_RISK_TOOLS,
     PROHIBITED_PATTERNS,
     PROTECTED_PID_MAX,
     PROTECTED_PROCESS_NAMES,
@@ -64,8 +62,7 @@ class SecurityGuard:
         self,
         *,
         raw_query: str,
-        tools: list[str],
-        arguments: dict[str, Any],
+        plan: Plan,
         user_id: str,
         registry: ToolRegistry,
         approved: bool,
@@ -73,41 +70,41 @@ class SecurityGuard:
         checks: list[SecurityCheck] = []
         reasons: list[str] = []
 
-        whitelist_ok, whitelist_reason = self._check_tool_whitelist(tools, registry)
+        whitelist_ok, whitelist_reason = self._check_tool_whitelist(plan.tools, registry)
         checks.append(SecurityCheck("tool_whitelist", whitelist_ok, whitelist_reason))
         if not whitelist_ok:
             reasons.append(whitelist_reason)
 
-        schema_ok, schema_reason = self._check_argument_schema(tools, arguments, registry)
+        schema_ok, schema_reason = self._check_argument_schema(plan, registry)
         checks.append(SecurityCheck("parameter_schema", schema_ok, schema_reason))
         if not schema_ok:
             reasons.append(schema_reason)
 
-        parameter_ok, parameter_reason = self._check_parameter_values(arguments)
+        parameter_ok, parameter_reason = self._check_parameter_values(plan)
         checks.append(SecurityCheck("parameter_values", parameter_ok, parameter_reason))
         if not parameter_ok:
             reasons.append(parameter_reason)
 
-        process_ok, process_reason = self._check_process_target(raw_query, tools, arguments)
+        process_ok, process_reason = self._check_process_target(raw_query, plan)
         checks.append(SecurityCheck("process_target", process_ok, process_reason))
         if not process_ok:
             reasons.append(process_reason)
 
-        path_ok, path_reason = self._check_dangerous_paths(raw_query, arguments)
+        path_ok, path_reason = self._check_dangerous_paths(raw_query, plan)
         checks.append(SecurityCheck("dangerous_path", path_ok, path_reason))
         if not path_ok:
             reasons.append(path_reason)
 
-        command_ok, command_reason, prohibited = self._check_dangerous_commands(raw_query, arguments)
+        command_ok, command_reason, prohibited = self._check_dangerous_commands(raw_query, plan)
         checks.append(SecurityCheck("dangerous_command", command_ok, command_reason))
         if not command_ok:
             reasons.append(command_reason)
 
-        risk_level = "prohibited" if prohibited else self._calculate_risk(raw_query, tools, arguments, registry)
+        risk_level = "prohibited" if prohibited else self._calculate_risk(raw_query, plan, registry)
 
         permission_ok, permission_reason = self._check_permission(
             user_id=user_id,
-            arguments=arguments,
+            arguments=plan.arguments,
             risk_level=risk_level,
         )
         checks.append(SecurityCheck("user_permission", permission_ok, permission_reason))
@@ -155,15 +152,15 @@ class SecurityGuard:
 
     def _check_argument_schema(
         self,
-        tools: list[str],
-        arguments: dict[str, Any],
+        plan: Plan,
         registry: ToolRegistry,
     ) -> tuple[bool, str]:
-        for tool_name in tools:
+        for tool_name in plan.tools:
             definition = registry.get(tool_name)
             if definition is None:
                 continue
-            ok, reason = self._validate_schema(arguments, definition.input_schema)
+            tool_args = plan.args_for(tool_name)
+            ok, reason = self._validate_schema(tool_args, definition.input_schema)
             if not ok:
                 return False, f"{tool_name}: {reason}"
         return True, "parameters match declared tool schemas"
@@ -195,8 +192,8 @@ class SecurityGuard:
                     return False, f"{key} exceeds maximum {rule['maximum']}"
         return True, "schema ok"
 
-    def _check_parameter_values(self, arguments: dict[str, Any]) -> tuple[bool, str]:
-        for key, value in self._walk_values(arguments):
+    def _check_parameter_values(self, plan: Plan) -> tuple[bool, str]:
+        for key, value in self._walk_all_values(plan):
             if key in {"query", "user_id", "user_role", "approved"}:
                 continue
             if isinstance(value, str) and not SAFE_STRING_PATTERN.fullmatch(value):
@@ -206,13 +203,13 @@ class SecurityGuard:
     def _check_process_target(
         self,
         raw_query: str,
-        tools: list[str],
-        arguments: dict[str, Any],
+        plan: Plan,
     ) -> tuple[bool, str]:
-        if "process.kill" not in tools:
+        if "process.kill" not in plan.tools:
             return True, "no process termination requested"
 
-        pid = arguments.get("pid")
+        kill_args = plan.args_for("process.kill")
+        pid = kill_args.get("pid")
         if not isinstance(pid, int) or isinstance(pid, bool):
             return False, "process.kill requires integer pid"
         if pid <= PROTECTED_PID_MAX:
@@ -220,25 +217,25 @@ class SecurityGuard:
         if pid in {os.getpid(), os.getppid()}:
             return False, "refuse to kill current agent process or its parent"
 
-        expected_name = str(arguments.get("expected_name", "")).strip()
+        expected_name = str(kill_args.get("expected_name", "")).strip()
         protected_names = {name.lower() for name in PROTECTED_PROCESS_NAMES}
         if expected_name.lower() in protected_names:
             return False, f"refuse to kill protected process: {expected_name}"
 
-        text = self._joined_text(raw_query, arguments).lower()
+        text = self._joined_text(raw_query, plan).lower()
         for process_name in protected_names:
             if process_name and process_name in text:
                 return False, f"request mentions protected process: {process_name}"
         return True, "process target passed static safety checks"
 
-    def _check_dangerous_paths(self, raw_query: str, arguments: dict[str, Any]) -> tuple[bool, str]:
+    def _check_dangerous_paths(self, raw_query: str, plan: Plan) -> tuple[bool, str]:
         path_candidates = self._extract_paths(raw_query)
-        for key, value in self._walk_values(arguments):
-            if "path" in key.lower() or key.lower() in {"target", "directory"}:
+        for key, value in self._walk_all_values(plan):
+            if "path" in key.lower() or key.lower().endswith((".target", ".directory")) or key.lower() in {"target", "directory"}:
                 if isinstance(value, str):
                     path_candidates.append(value)
 
-        text = self._joined_text(raw_query, arguments).lower()
+        text = self._joined_text(raw_query, plan).lower()
         destructive_context = any(
             word in text
             for word in [
@@ -277,9 +274,9 @@ class SecurityGuard:
     def _check_dangerous_commands(
         self,
         raw_query: str,
-        arguments: dict[str, Any],
+        plan: Plan,
     ) -> tuple[bool, str, bool]:
-        text = self._joined_text(raw_query, arguments)
+        text = self._joined_text(raw_query, plan)
         for pattern in PROHIBITED_PATTERNS:
             if re.search(pattern, text, flags=re.IGNORECASE):
                 return False, f"request matched prohibited command pattern: {pattern}", True
@@ -291,27 +288,21 @@ class SecurityGuard:
     def _calculate_risk(
         self,
         raw_query: str,
-        tools: list[str],
-        arguments: dict[str, Any],
+        plan: Plan,
         registry: ToolRegistry,
     ) -> str:
         risk_level = "low"
-        for tool_name in tools:
-            if tool_name in MEDIUM_RISK_TOOLS:
-                risk_level = self._max_risk(risk_level, "medium")
-            elif tool_name in HIGH_RISK_TOOLS:
-                risk_level = self._max_risk(risk_level, "high")
-            elif tool_name not in LOW_RISK_TOOLS:
-                definition = registry.get(tool_name)
-                risk_level = self._max_risk(risk_level, definition.risk_level if definition else "high")
+        for tool_name in plan.tools:
+            definition = registry.get(tool_name)
+            risk_level = self._max_risk(risk_level, definition.risk_level if definition else "high")
 
-        text = self._joined_text(raw_query, arguments).lower()
+        text = self._joined_text(raw_query, plan).lower()
         if any(word in text for word in ["重启", "restart", "清理", "clean", "kill", "杀死"]):
             risk_level = self._max_risk(risk_level, "medium")
         if any(word in text for word in ["修改配置", "chmod", "chown", "用户", "user", "stop", "停止安全服务"]):
             risk_level = self._max_risk(risk_level, "high")
 
-        service_name = str(arguments.get("service_name", ""))
+        service_name = str(plan.args_for("service.restart").get("service_name", ""))
         if service_name in PROTECTED_SERVICES and any(word in text for word in ["stop", "停止", "disable", "关闭"]):
             risk_level = self._max_risk(risk_level, "high")
         if "restart" in text or "重启" in text:
@@ -359,9 +350,18 @@ class SecurityGuard:
         return [(prefix, value)]
 
     @staticmethod
-    def _joined_text(raw_query: str, arguments: dict[str, Any]) -> str:
+    def _walk_all_values(plan: Plan) -> list[tuple[str, Any]]:
+        pairs = SecurityGuard._walk_values(plan.arguments)
+        for tool_name, tool_args in plan.arguments_by_tool.items():
+            prefix = f"by_tool.{tool_name}"
+            for key, value in SecurityGuard._walk_values(tool_args):
+                pairs.append((f"{prefix}.{key}" if key else prefix, value))
+        return pairs
+
+    @staticmethod
+    def _joined_text(raw_query: str, plan: Plan) -> str:
         values = [raw_query]
-        values.extend(str(value) for _, value in SecurityGuard._walk_values(arguments))
+        values.extend(str(value) for _, value in SecurityGuard._walk_all_values(plan))
         return " ".join(values)
 
     @staticmethod

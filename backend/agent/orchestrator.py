@@ -193,6 +193,7 @@ class AgentOrchestrator:
             "intent": plan.intent,
             "tools": plan.tools,
             "arguments": plan.arguments,
+            "arguments_by_tool": plan.arguments_by_tool,
             "summary": plan.summary,
             "source": plan.source,
             "reasoning": plan.reasoning,

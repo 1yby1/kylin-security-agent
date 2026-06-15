@@ -4,7 +4,7 @@ import json
 import re
 import urllib.error
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from backend.agent.prompt import ANALYSIS_SYSTEM_PROMPT, PLANNING_SYSTEM_PROMPT
@@ -16,6 +16,7 @@ class LLMDecision:
     intent: str
     tools: list[str]
     arguments: dict[str, Any]
+    arguments_by_tool: dict[str, dict[str, Any]] = field(default_factory=dict)
     summary: str = ""
     risk_hint: str = "low"
     need_confirmation: bool = False
@@ -73,19 +74,18 @@ class LLMClient:
             self._last_error = "LLM returned empty or non-JSON planning content"
             return None
 
-        tools = [
-            tool
-            for tool in data.get("tools", [])
-            if tool in {"system", "process", "process.kill", "network", "log", "service", "service.restart", "temp.clean", "disk"}
-        ]
+        allowed_tools = self._allowed_tool_names(tool_manifest or {})
+        tools = [tool for tool in data.get("tools", []) if isinstance(tool, str) and tool in allowed_tools]
         if not tools:
             self._last_error = "LLM planning JSON did not contain valid registered tools"
             return None
         self._last_error = ""
+        schemas = self._tool_schemas(tool_manifest or {})
         return LLMDecision(
             intent=data.get("intent", "inspection"),
             tools=tools,
-            arguments=data.get("arguments", {}),
+            arguments=data.get("arguments", {}) or {},
+            arguments_by_tool=self._coerce_arguments_by_tool(data.get("arguments_by_tool"), tools, schemas),
             summary=data.get("summary", ""),
             risk_hint=data.get("risk_hint", "low"),
             need_confirmation=bool(data.get("need_confirmation", False)),
@@ -183,6 +183,80 @@ class LLMClient:
             return json.loads(stripped)
         except json.JSONDecodeError:
             return None
+
+    @staticmethod
+    def _allowed_tool_names(tool_manifest: dict[str, Any]) -> set[str]:
+        tools = tool_manifest.get("tools", [])
+        if not isinstance(tools, list):
+            return set()
+        return {
+            str(tool.get("name"))
+            for tool in tools
+            if isinstance(tool, dict) and tool.get("name")
+        }
+
+    @staticmethod
+    def _tool_schemas(tool_manifest: dict[str, Any]) -> dict[str, dict[str, Any]]:
+        tools = tool_manifest.get("tools", [])
+        if not isinstance(tools, list):
+            return {}
+        schemas: dict[str, dict[str, Any]] = {}
+        for tool in tools:
+            if isinstance(tool, dict) and tool.get("name"):
+                schema = tool.get("input_schema")
+                schemas[str(tool.get("name"))] = schema if isinstance(schema, dict) else {}
+        return schemas
+
+    @staticmethod
+    def _coerce_arguments_by_tool(
+        value: Any,
+        tools: list[str],
+        schemas: dict[str, dict[str, Any]] | None = None,
+    ) -> dict[str, dict[str, Any]]:
+        if not isinstance(value, dict):
+            return {}
+        allowed = set(tools)
+        schemas = schemas or {}
+        coerced: dict[str, dict[str, Any]] = {}
+        for tool_name, tool_args in value.items():
+            if tool_name not in allowed or not isinstance(tool_args, dict):
+                continue
+            properties = schemas.get(tool_name, {}).get("properties", {})
+            # Hard rule: drop hallucinated placeholder values (None, empty strings,
+            # or values that violate the tool's own schema such as pid=0). The model
+            # is told not to emit these, but we never trust planning output.
+            clean = {
+                key: item
+                for key, item in tool_args.items()
+                if LLMClient._value_is_concrete(item, properties.get(key))
+            }
+            if clean:
+                coerced[tool_name] = clean
+        return coerced
+
+    @staticmethod
+    def _value_is_concrete(value: Any, rule: dict[str, Any] | None) -> bool:
+        if value is None:
+            return False
+        if isinstance(value, str) and not value.strip():
+            return False
+        if not isinstance(rule, dict):
+            return True
+        expected = rule.get("type")
+        if expected == "integer" and (not isinstance(value, int) or isinstance(value, bool)):
+            return False
+        if expected == "boolean" and not isinstance(value, bool):
+            return False
+        if expected == "string" and not isinstance(value, str):
+            return False
+        if "enum" in rule and value not in rule["enum"]:
+            return False
+        if isinstance(value, int) and not isinstance(value, bool):
+            if "minimum" in rule and value < rule["minimum"]:
+                return False
+            if "maximum" in rule and value > rule["maximum"]:
+                return False
+        return True
 
     @staticmethod
     def _mask_key(api_key: str) -> str:
