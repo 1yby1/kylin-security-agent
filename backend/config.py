@@ -35,7 +35,7 @@ def get_llm_settings() -> LLMSettings:
         },
         "qwen": {
             "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
-            "model": "qwen-plus",
+            "model": "qwen-max",
             "key_env": "QWEN_API_KEY",
         },
     }
