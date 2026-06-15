@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -14,13 +15,33 @@ from backend.agent.orchestrator import AgentOrchestrator
 from backend.agent.planner import Plan, Planner
 from backend.audit.logger import AuditLogger
 from backend.database.db import init_db
+from backend.mcp_server.server import build_session_manager
 from backend.security.least_privilege import runtime_identity
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 FRONTEND_DIR = ROOT_DIR / "frontend"
 
-app = FastAPI(title="Software Cup Ops Assistant", version="0.1.0")
+agent = AgentOrchestrator()
+planner = agent.planner
+executor = agent.executor
+audit = AuditLogger()
+
+mcp_session_manager = build_session_manager(executor)
+
+
+async def handle_mcp(scope, receive, send) -> None:
+    await mcp_session_manager.handle_request(scope, receive, send)
+
+
+@contextlib.asynccontextmanager
+async def lifespan(app: FastAPI):
+    init_db()
+    async with mcp_session_manager.run():
+        yield
+
+
+app = FastAPI(title="Software Cup Ops Assistant", version="0.1.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -33,10 +54,7 @@ app.add_middleware(
 if FRONTEND_DIR.exists():
     app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
 
-agent = AgentOrchestrator()
-planner = agent.planner
-executor = agent.executor
-audit = AuditLogger()
+app.mount("/mcp", handle_mcp)
 
 
 class AgentRequest(BaseModel):
@@ -62,11 +80,6 @@ class AgentResponse(BaseModel):
 
 class ToolRequest(BaseModel):
     arguments: dict[str, Any] = Field(default_factory=dict)
-
-
-@app.on_event("startup")
-def on_startup() -> None:
-    init_db()
 
 
 @app.get("/", response_model=None)
