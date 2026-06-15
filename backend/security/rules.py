@@ -125,7 +125,7 @@ DANGEROUS_COMMAND_PATTERNS = [
     r"\bsystemctl\s+(?:stop|disable|mask)\b",
 ]
 
-SAFE_STRING_PATTERN = re.compile(r"^[\w\s./:@+=,%\-\u4e00-\u9fff]{0,512}$", re.UNICODE)
+SAFE_STRING_PATTERN = re.compile(r"^[\w\s./\\:@+=,%\-\u4e00-\u9fff]{0,512}$", re.UNICODE)
 
 
 @dataclass(frozen=True)

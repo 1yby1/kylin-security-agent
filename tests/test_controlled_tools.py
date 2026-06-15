@@ -182,6 +182,9 @@ class ControlledToolSecurityTests(unittest.TestCase):
         self.assertIn("final_answer", stages)
         self.assertIn("trace_complete", stages)
 
+        all_records = AuditLogger().read_recent(limit=20)
+        self.assertTrue(all("trace_id" in record and "stage" in record for record in all_records))
+
     def test_executed_commands_are_written_to_audit_trace(self) -> None:
         registry = ToolRegistry()
         registry.register(

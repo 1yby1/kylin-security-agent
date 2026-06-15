@@ -2,6 +2,8 @@
 
 Every user request is written as a JSONL audit trace. A request receives one
 `trace_id`, and each stage appends one event to the audit log.
+Audit logging uses only trace events; there is no separate per-request summary
+record written outside the `trace_id` flow.
 
 ## Audit Path
 

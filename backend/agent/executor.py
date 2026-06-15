@@ -37,8 +37,7 @@ class ToolExecutor:
     def evaluate_security(self, plan: Plan, user_id: str, raw_query: str, approved: bool = False) -> dict[str, Any]:
         return self._guard.check(
             raw_query=raw_query,
-            tools=plan.tools,
-            arguments=plan.arguments,
+            plan=plan,
             user_id=user_id,
             registry=self._registry,
             approved=approved,
@@ -54,8 +53,7 @@ class ToolExecutor:
     ) -> ExecutionResult:
         safety = self._guard.check(
             raw_query=raw_query,
-            tools=plan.tools,
-            arguments=plan.arguments,
+            plan=plan,
             user_id=user_id,
             registry=self._registry,
             approved=approved,
@@ -68,10 +66,8 @@ class ToolExecutor:
                 user_id=user_id,
                 status="blocked" if safety.blocked else "passed",
                 data={"security": security},
-            )
+        )
         if safety.blocked:
-            status = "approval_required" if safety.confirmation_required and not approved and safety.risk_level != "high" else "blocked"
-            self._audit.write(user_id, raw_query, plan, status, {"security": security, "executed_commands": []})
             return ExecutionResult(
                 approved_required=safety.confirmation_required and not approved,
                 blocked=True,
@@ -84,15 +80,16 @@ class ToolExecutor:
         output: dict[str, Any] = {}
         executed_commands: list[dict[str, Any]] = []
         for tool_name in plan.tools:
+            tool_args = plan.args_for(tool_name)
             if trace_id:
                 self._audit.event(
                     trace_id=trace_id,
                     stage="tool_call",
                     user_id=user_id,
                     status="started",
-                    data={"tool": tool_name, "arguments": plan.arguments},
+                    data={"tool": tool_name, "arguments": tool_args},
                 )
-            output[tool_name] = self._registry.call(tool_name, plan.arguments)
+            output[tool_name] = self._registry.call(tool_name, tool_args)
             tool_commands = self._extract_executed_commands(tool_name, output[tool_name])
             executed_commands.extend(tool_commands)
             if trace_id:
@@ -108,13 +105,6 @@ class ToolExecutor:
                     },
                 )
 
-        self._audit.write(
-            user_id,
-            raw_query,
-            plan,
-            "success",
-            {"security": security, "executed_commands": executed_commands, "output": output},
-        )
         return ExecutionResult(
             approved_required=False,
             blocked=False,

@@ -7,7 +7,7 @@ but it keeps the same shape needed for later plugin loading.
 ## Core Files
 
 - `backend/mcp_tools/registry.py`: generic registry and `ToolDefinition`.
-- `backend/mcp_tools/builtin.py`: built-in tool registration list.
+- `backend/mcp_tools/builtin.py`: built-in tool registration list and the single source of truth for tool names, risk levels, schemas, and command templates.
 - `backend/agent/executor.py`: executes tools through `ToolRegistry`.
 - `backend/main.py`: exposes tool discovery APIs.
 
@@ -32,6 +32,11 @@ Each tool declares:
 1. Create a Python tool module under `backend/mcp_tools/`.
 2. Add command templates to `backend/mcp_tools/command_runner.py` if the tool needs OS commands.
 3. Register the tool in `backend/mcp_tools/builtin.py`.
+4. Add local fallback planning keywords only if the tool must work when the LLM is disabled.
+
+Do not add a second tool whitelist elsewhere. The LLM receives the runtime
+manifest from `ToolExecutor.tool_manifest()`, and `SecurityGuard` reads each
+tool's `risk_level` from `ToolDefinition`.
 
 Example:
 

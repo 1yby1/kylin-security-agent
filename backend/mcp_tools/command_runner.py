@@ -17,6 +17,7 @@ COMMAND_TEMPLATES: dict[str, dict[str, list[str]]] = {
         "system.info": ["systeminfo"],
         "system.hostname": ["hostname"],
         "process.list": ["tasklist"],
+        "process.by_pid": ["tasklist", "/FI", "PID eq {pid}", "/FO", "LIST"],
         "network.ports": ["netstat", "-ano"],
         "service.list": ["sc", "query"],
         "service.status": ["sc", "query", "{service_name}"],

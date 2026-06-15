@@ -5,8 +5,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from backend.agent.planner import Plan
-from backend.audit.models import AuditEvent, AuditRecord
+from backend.audit.models import AuditEvent
 
 
 class AuditLogger:
@@ -14,18 +13,6 @@ class AuditLogger:
         configured_path = os.getenv("AGENT_AUDIT_LOG_PATH")
         self._path = path or (Path(configured_path) if configured_path else Path(__file__).resolve().parent / "logs" / "audit.log")
         self._path.parent.mkdir(parents=True, exist_ok=True)
-
-    def write(self, user_id: str, query: str, plan: Plan, status: str, result: dict[str, Any]) -> None:
-        record = AuditRecord.create(
-            user_id=user_id,
-            query=query,
-            intent=plan.intent,
-            tools=plan.tools,
-            status=status,
-            result=result,
-        )
-        with self._path.open("a", encoding="utf-8") as file:
-            file.write(json.dumps(record.to_dict(), ensure_ascii=False) + "\n")
 
     def event(
         self,

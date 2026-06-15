@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from backend.mcp_tools import (
     disk_tool,
+    log_search_tool,
+    network_port_lookup_tool,
+    process_detail_tool,
     process_kill_tool,
+    process_top_tool,
     log_tool,
     network_tool,
     process_tool,
@@ -58,6 +62,41 @@ def register_builtin_tools(registry: ToolRegistry) -> None:
     )
     registry.register(
         ToolDefinition(
+            name="process.top",
+            title="高占用进程定位工具",
+            description="按 CPU 或内存占用排序，返回高占用进程列表。",
+            category="perception",
+            handler=process_top_tool.run,
+            command_templates=["process.list"],
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "metric": {"type": "string", "enum": ["cpu", "memory"]},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+                    "min_percent": {"type": "integer", "minimum": 0, "maximum": 10000},
+                },
+            },
+        )
+    )
+    registry.register(
+        ToolDefinition(
+            name="process.detail",
+            title="进程详情工具",
+            description="按 PID 查询进程属主、状态、命令名和启动参数。",
+            category="perception",
+            handler=process_detail_tool.run,
+            command_templates=["process.by_pid"],
+            input_schema={
+                "type": "object",
+                "required": ["pid"],
+                "properties": {
+                    "pid": {"type": "integer", "minimum": 1},
+                },
+            },
+        )
+    )
+    registry.register(
+        ToolDefinition(
             name="process.kill",
             title="进程终止工具",
             description="向指定非系统进程发送 TERM 信号，执行前校验 PID、进程归属和受保护进程。",
@@ -96,6 +135,25 @@ def register_builtin_tools(registry: ToolRegistry) -> None:
     )
     registry.register(
         ToolDefinition(
+            name="network.port_lookup",
+            title="端口进程定位工具",
+            description="按端口号查询监听或占用该端口的 PID 和进程信息。",
+            category="perception",
+            handler=network_port_lookup_tool.run,
+            command_templates=["network.ports"],
+            input_schema={
+                "type": "object",
+                "required": ["port"],
+                "properties": {
+                    "port": {"type": "integer", "minimum": 1, "maximum": 65535},
+                    "protocol": {"type": "string", "enum": ["tcp", "udp", "all"]},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 200},
+                },
+            },
+        )
+    )
+    registry.register(
+        ToolDefinition(
             name="log",
             title="日志分析工具",
             description="读取 journalctl 或指定日志文件，并统计错误、告警、权限相关线索。",
@@ -110,6 +168,30 @@ def register_builtin_tools(registry: ToolRegistry) -> None:
                     "lines": {"type": "integer", "minimum": 1, "maximum": 500},
                     "priority": {"type": "string"},
                     "unit": {"type": "string"},
+                },
+            },
+        )
+    )
+    registry.register(
+        ToolDefinition(
+            name="log.search",
+            title="日志关键词检索工具",
+            description="在 journalctl 或指定日志文件中按关键词检索日志行，并统计匹配结果。",
+            category="perception",
+            handler=log_search_tool.run,
+            command_templates=["log.journal", "log.journal_priority", "log.journal_unit"],
+            input_schema={
+                "type": "object",
+                "required": ["keyword"],
+                "properties": {
+                    "keyword": {"type": "string"},
+                    "source": {"type": "string", "enum": ["journal", "file"]},
+                    "log_path": {"type": "string"},
+                    "lines": {"type": "integer", "minimum": 1, "maximum": 1000},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 200},
+                    "priority": {"type": "string"},
+                    "unit": {"type": "string"},
+                    "case_sensitive": {"type": "boolean"},
                 },
             },
         )
