@@ -162,10 +162,36 @@ export AGENT_STRICT_LEAST_PRIVILEGE=true
 
 ## 相关设计文档
 
-- `docs/system-perception-tools.md`：系统感知工具。
-- `docs/mcp-tool-registration.md`：MCP-like 工具注册。
-- `docs/security-intent-validator.md`：安全意图校验。
-- `docs/least-privilege-execution.md`：最小权限执行。
-- `docs/llm-agent-json-contract.md`：LLM JSON 合约。
-- `docs/audit-tracing.md`：全链路审计。
-- `docs/controlled-operation-tools.md`：受控操作工具。
+Medium-risk tools such as `service.restart` are registered as MCP-like tools but
+require security validation, operator/admin role, and secondary confirmation.
+See `docs/controlled-operation-tools.md`.
+
+## MCP protocol server (Streamable HTTP)
+
+Besides the human-readable `GET /api/mcp/tools` manifest, the app also serves a
+real MCP (Model Context Protocol) endpoint over Streamable HTTP, mounted at
+`/mcp` (`backend/mcp_server/server.py`). It is built with the official `mcp`
+SDK's low-level `Server` plus `StreamableHTTPSessionManager`, whose lifecycle is
+driven by the FastAPI `lifespan` handler (which also runs `init_db`).
+
+- `tools/list`: `build_tool_list()` maps the `ToolRegistry` tools to MCP `Tool`
+  objects, including `inputSchema`, a `[risk: ...]` description suffix, and a
+  `readOnlyHint` annotation.
+- `tools/call`: `run_tool_call()` builds a `Plan` and calls
+  `ToolExecutor.execute()` — the same controlled path as `POST /api/tools/{name}`
+  — so `SecurityGuard`, audit, and least-privilege all apply. **The MCP entry
+  point never bypasses the security gate.** The synchronous executor runs in a
+  worker thread via `anyio.to_thread.run_sync`.
+- Default MCP identity: `AGENT_MCP_CLIENT_USER` (default `mcp-client`) and
+  `AGENT_MCP_CLIENT_ROLE` (default `viewer`, the lowest privilege). Controlled
+  operations require raising the role to `operator`/`admin` and passing
+  `approved: true` in the call arguments; otherwise `SecurityGuard` blocks them.
+- Every MCP call produces a full `trace_id` audit chain with `channel=mcp` in the
+  event data.
+
+Clients connect to `http://<host>:8000/mcp` (a `POST /mcp` is `307`-redirected to
+`/mcp/`; MCP clients follow this automatically). Two-layer input filtering
+applies: the SDK first validates arguments against each tool's `inputSchema`
+(e.g. `process.kill` rejects `pid < 101`), then `SecurityGuard` enforces the
+risk policy (protected processes/services, roles, confirmation, dangerous
+patterns).

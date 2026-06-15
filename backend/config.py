@@ -58,3 +58,16 @@ def get_runtime_settings() -> RuntimeSettings:
         strict_least_privilege=strict,
         safe_workdir=safe_workdir,
     )
+
+
+@dataclass(frozen=True)
+class MCPSettings:
+    client_user_id: str
+    client_role: str
+
+
+def get_mcp_settings() -> MCPSettings:
+    return MCPSettings(
+        client_user_id=os.getenv("AGENT_MCP_CLIENT_USER", "mcp-client"),
+        client_role=os.getenv("AGENT_MCP_CLIENT_ROLE", "viewer"),
+    )
