@@ -4,7 +4,14 @@ from unittest import mock
 
 from backend.agent.executor import ExecutionResult, ToolExecutor
 from backend.config import get_mcp_settings
-from backend.mcp_server.server import build_tool_list, run_tool_call
+from backend.mcp_server.server import (
+    build_mcp_server,
+    build_session_manager,
+    build_tool_list,
+    run_tool_call,
+)
+from mcp.server.lowlevel import Server
+from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 
 
 class MCPSettingsTests(unittest.TestCase):
@@ -91,6 +98,16 @@ class RunToolCallTests(unittest.TestCase):
         )
         self.assertTrue(payload["blocked"])
         self.assertEqual(payload["executed_commands"], [])
+
+
+class ServerAssemblyTests(unittest.TestCase):
+    def test_build_mcp_server_returns_server(self):
+        server = build_mcp_server(ToolExecutor())
+        self.assertIsInstance(server, Server)
+
+    def test_build_session_manager_returns_manager(self):
+        manager = build_session_manager(ToolExecutor())
+        self.assertIsInstance(manager, StreamableHTTPSessionManager)
 
 
 if __name__ == "__main__":

@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import functools
+import json
 from uuid import uuid4
 
+import anyio
 import mcp.types as types
+from mcp.server.lowlevel import Server
+from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 
 from backend.agent.executor import ToolExecutor
 from backend.agent.planner import Plan
@@ -91,3 +96,29 @@ def run_tool_call(
         data={"tool": name, "channel": "mcp", "blocked": execution.blocked},
     )
     return payload
+
+
+def build_mcp_server(executor: ToolExecutor) -> Server:
+    server: Server = Server(MCP_SERVER_NAME)
+
+    @server.list_tools()
+    async def _list_tools() -> list[types.Tool]:
+        return build_tool_list(executor)
+
+    @server.call_tool()
+    async def _call_tool(name: str, arguments: dict) -> list[types.TextContent]:
+        payload = await anyio.to_thread.run_sync(
+            functools.partial(run_tool_call, executor, name, arguments)
+        )
+        return [types.TextContent(type="text", text=json.dumps(payload, ensure_ascii=False))]
+
+    return server
+
+
+def build_session_manager(executor: ToolExecutor) -> StreamableHTTPSessionManager:
+    return StreamableHTTPSessionManager(
+        app=build_mcp_server(executor),
+        event_store=None,
+        json_response=True,
+        stateless=True,
+    )
