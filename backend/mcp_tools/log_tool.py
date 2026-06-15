@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from backend.mcp_tools.command_runner import run_optional_template
+from backend.security.rules import SAFE_LOG_DIRS
 
 
 def run(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -25,9 +26,9 @@ def run(arguments: dict[str, Any]) -> dict[str, Any]:
             "lines": [],
         }
 
-    path = Path(str(log_path)).expanduser()
-    if not path.exists() or not path.is_file():
-        return {"error": f"log file not found: {path}"}
+    path, error = resolve_log_path(log_path)
+    if error:
+        return {"error": error}
 
     lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
     recent = lines[-_clamp_lines(arguments.get("lines", 100)) :]
@@ -55,6 +56,33 @@ def _clamp_lines(value: Any) -> int:
     except (TypeError, ValueError):
         parsed = 100
     return max(1, min(parsed, 500))
+
+
+def resolve_log_path(value: Any) -> tuple[Path, str]:
+    path = Path(str(value)).expanduser()
+    if not path.exists() or not path.is_file():
+        return path, f"log file not found: {path}"
+
+    resolved = path.resolve(strict=True)
+    allowed_dirs = _allowed_log_dirs()
+    if not any(_is_relative_to(resolved, allowed_dir) for allowed_dir in allowed_dirs):
+        allowed = ", ".join(str(item) for item in allowed_dirs)
+        return resolved, f"log file is outside allowed log directories: {resolved}; allowed: {allowed}"
+    return resolved, ""
+
+
+def _allowed_log_dirs() -> list[Path]:
+    configured = os.getenv("AGENT_ALLOWED_LOG_DIRS", "")
+    values = [item for item in configured.split(os.pathsep) if item.strip()] if configured else list(SAFE_LOG_DIRS)
+    return [Path(value).expanduser().resolve(strict=False) for value in values]
+
+
+def _is_relative_to(path: Path, parent: Path) -> bool:
+    try:
+        path.relative_to(parent)
+        return True
+    except ValueError:
+        return False
 
 
 def _analyze_logs(lines: list[str]) -> dict[str, Any]:
