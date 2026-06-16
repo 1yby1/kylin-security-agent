@@ -104,6 +104,13 @@
                 <input v-model="approved" type="checkbox" />
                 授予二次确认
               </label>
+              <input
+                v-model="token"
+                type="password"
+                class="token-input"
+                placeholder="访问令牌（留空=viewer）"
+                autocomplete="off"
+              />
               <button type="submit" :disabled="chatLoading">
                 <svg class="icon" aria-hidden="true" style="width:14px;height:14px"><use href="#icon-send" /></svg>
                 {{ chatLoading ? "执行中" : "发送" }}

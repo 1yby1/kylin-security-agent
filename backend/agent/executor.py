@@ -34,7 +34,7 @@ class ToolExecutor:
     def tool_manifest(self) -> dict[str, Any]:
         return self._registry.manifest()
 
-    def evaluate_security(self, plan: Plan, user_id: str, raw_query: str, approved: bool = False) -> dict[str, Any]:
+    def evaluate_security(self, plan: Plan, user_id: str, raw_query: str, approved: bool = False, role: str | None = None) -> dict[str, Any]:
         return self._guard.check(
             raw_query=raw_query,
             tools=plan.tools,
@@ -42,6 +42,7 @@ class ToolExecutor:
             user_id=user_id,
             registry=self._registry,
             approved=approved,
+            role=role,
         ).to_dict()
 
     def execute(
@@ -51,6 +52,7 @@ class ToolExecutor:
         raw_query: str,
         approved: bool = False,
         trace_id: str | None = None,
+        role: str | None = None,
     ) -> ExecutionResult:
         safety = self._guard.check(
             raw_query=raw_query,
@@ -59,6 +61,7 @@ class ToolExecutor:
             user_id=user_id,
             registry=self._registry,
             approved=approved,
+            role=role,
         )
         security = safety.to_dict()
         if trace_id:

@@ -373,6 +373,14 @@ input:focus {
   accent-color: var(--color-primary);
 }
 
+.token-input {
+  width: auto;
+  flex: 1 1 180px;
+  max-width: 280px;
+  padding: 9px 12px;
+  font-size: var(--text-base);
+}
+
 button {
   border: 0;
   border-radius: var(--radius-sm);

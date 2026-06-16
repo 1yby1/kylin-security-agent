@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -16,6 +16,7 @@ from backend.agent.planner import Plan, Planner
 from backend.audit.logger import AuditLogger
 from backend.database.db import init_db
 from backend.mcp_server.server import build_session_manager
+from backend.security.auth import parse_bearer, resolve_role
 from backend.security.least_privilege import runtime_identity
 
 
@@ -82,6 +83,20 @@ class ToolRequest(BaseModel):
     arguments: dict[str, Any] = Field(default_factory=dict)
 
 
+def _role_from_header(authorization: str | None) -> str:
+    """Resolve a trusted role from the Authorization header.
+
+    Role is established server-side from the presented token; any ``user_role``
+    in the request body is ignored. Missing/unknown token resolves to viewer.
+    """
+    return resolve_role(parse_bearer(authorization))
+
+
+def _strip_client_role(values: dict[str, Any]) -> dict[str, Any]:
+    """Drop client-supplied role claims so they cannot influence authorization."""
+    return {key: value for key, value in values.items() if key != "user_role"}
+
+
 @app.get("/", response_model=None)
 def index() -> FileResponse | dict[str, str]:
     index_file = FRONTEND_DIR / "index.html"
@@ -96,12 +111,14 @@ def health() -> dict[str, str]:
 
 
 @app.post("/api/agent/execute", response_model=AgentResponse)
-def execute_agent(request: AgentRequest) -> AgentResponse:
+def execute_agent(request: AgentRequest, authorization: str | None = Header(default=None)) -> AgentResponse:
+    role = _role_from_header(authorization)
     run = agent.run(
         query=request.query,
         user_id=request.user_id,
-        context=request.context,
+        context=_strip_client_role(request.context),
         approved=request.approved,
+        role=role,
     )
     return AgentResponse(
         trace_id=run.trace_id,
@@ -119,20 +136,23 @@ def execute_agent(request: AgentRequest) -> AgentResponse:
 
 
 @app.post("/api/security/evaluate")
-def evaluate_security(request: AgentRequest) -> dict[str, Any]:
+def evaluate_security(request: AgentRequest, authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    role = _role_from_header(authorization)
+    context = _strip_client_role(request.context)
     trace_id = uuid4().hex
     audit.event(
         trace_id=trace_id,
         stage="received_instruction",
         user_id=request.user_id,
         status="received",
-        data={"query": request.query, "context": request.context, "approved": request.approved, "mode": "security_evaluate"},
+        data={"query": request.query, "context": context, "approved": request.approved, "role": role, "mode": "security_evaluate"},
     )
     result = agent.evaluate_security(
         query=request.query,
         user_id=request.user_id,
-        context=request.context,
+        context=context,
         approved=request.approved,
+        role=role,
     )
     audit.event(
         trace_id=trace_id,
@@ -153,15 +173,16 @@ def evaluate_security(request: AgentRequest) -> dict[str, Any]:
 
 @app.post("/api/agent/plan")
 def plan_agent(request: AgentRequest) -> dict[str, Any]:
+    context = _strip_client_role(request.context)
     trace_id = uuid4().hex
     audit.event(
         trace_id=trace_id,
         stage="received_instruction",
         user_id=request.user_id,
         status="received",
-        data={"query": request.query, "context": request.context, "mode": "plan_only"},
+        data={"query": request.query, "context": context, "mode": "plan_only"},
     )
-    plan = planner.plan(request.query, request.context, executor.tool_manifest())
+    plan = planner.plan(request.query, context, executor.tool_manifest())
     result = {
         "intent": plan.intent,
         "tools": plan.tools,
@@ -221,15 +242,17 @@ def describe_tool(tool_name: str) -> dict[str, Any]:
 
 
 @app.post("/api/tools/{tool_name}")
-def run_tool(tool_name: str, request: ToolRequest) -> dict[str, Any]:
+def run_tool(tool_name: str, request: ToolRequest, authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    role = _role_from_header(authorization)
+    arguments = _strip_client_role(request.arguments)
     trace_id = uuid4().hex
-    user_id = str(request.arguments.get("user_id", "tool-api"))
+    user_id = str(arguments.get("user_id", "tool-api"))
     audit.event(
         trace_id=trace_id,
         stage="received_instruction",
         user_id=user_id,
         status="received",
-        data={"tool": tool_name, "arguments": request.arguments, "mode": "direct_tool"},
+        data={"tool": tool_name, "arguments": arguments, "role": role, "mode": "direct_tool"},
     )
     if tool_name not in executor.available_tools():
         result = {"trace_id": trace_id, "error": f"unknown tool: {tool_name}"}
@@ -242,13 +265,14 @@ def run_tool(tool_name: str, request: ToolRequest) -> dict[str, Any]:
         )
         return result
 
-    plan = Plan(intent="inspection", tools=[tool_name], arguments=request.arguments)
+    plan = Plan(intent="inspection", tools=[tool_name], arguments=arguments)
     execution = executor.execute(
         plan=plan,
         user_id=user_id,
         raw_query=f"tool:{tool_name}",
         approved=False,
         trace_id=trace_id,
+        role=role,
     )
     response = {
         "trace_id": trace_id,
