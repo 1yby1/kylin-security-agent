@@ -69,6 +69,7 @@ class SecurityGuard:
         user_id: str,
         registry: ToolRegistry,
         approved: bool,
+        role: str | None = None,
     ) -> SecurityDecision:
         checks: list[SecurityCheck] = []
         reasons: list[str] = []
@@ -105,9 +106,13 @@ class SecurityGuard:
 
         risk_level = "prohibited" if prohibited else self._calculate_risk(raw_query, tools, arguments, registry)
 
+        resolved_role = (
+            role
+            if role is not None
+            else str(arguments.get("user_role") or self._role_from_user_id(user_id))
+        ).lower()
         permission_ok, permission_reason = self._check_permission(
-            user_id=user_id,
-            arguments=arguments,
+            role=resolved_role,
             risk_level=risk_level,
         )
         checks.append(SecurityCheck("user_permission", permission_ok, permission_reason))
@@ -320,8 +325,8 @@ class SecurityGuard:
 
         return risk_level
 
-    def _check_permission(self, user_id: str, arguments: dict[str, Any], risk_level: str) -> tuple[bool, str]:
-        role = str(arguments.get("user_role") or self._role_from_user_id(user_id)).lower()
+    def _check_permission(self, role: str, risk_level: str) -> tuple[bool, str]:
+        role = (role or "viewer").lower()
         if risk_level == "prohibited":
             return False, "prohibited operations are never allowed"
         policy = RISK_POLICIES[risk_level]

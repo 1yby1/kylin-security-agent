@@ -12,6 +12,7 @@ createApp({
       ],
       query: "查看系统状态、进程和端口情况",
       approved: false,
+      token: "",
       chatLoading: false,
       dashboardLoading: false,
       toolsLoading: false,
@@ -68,7 +69,9 @@ createApp({
       return "unknown";
     },
     async api(path, options = {}) {
-      const response = await fetch(path, options);
+      const headers = { ...(options.headers || {}) };
+      if (this.token) headers["Authorization"] = `Bearer ${this.token}`;
+      const response = await fetch(path, { ...options, headers });
       if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
       return response.json();
     },

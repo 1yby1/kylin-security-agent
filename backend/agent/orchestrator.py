@@ -45,14 +45,14 @@ class AgentOrchestrator:
     def planner(self) -> Planner:
         return self._planner
 
-    def run(self, query: str, user_id: str, context: dict[str, Any], approved: bool = False) -> AgentRunResult:
+    def run(self, query: str, user_id: str, context: dict[str, Any], approved: bool = False, role: str | None = None) -> AgentRunResult:
         trace_id = uuid4().hex
         self._audit.event(
             trace_id=trace_id,
             stage="received_instruction",
             user_id=user_id,
             status="received",
-            data={"query": query, "context": context, "approved": approved},
+            data={"query": query, "context": context, "approved": approved, "role": role},
         )
         plan = self._planner.plan(query, context, self._executor.tool_manifest())
         plan_data = self._plan_to_dict(plan)
@@ -69,6 +69,7 @@ class AgentOrchestrator:
             raw_query=query,
             approved=approved,
             trace_id=trace_id,
+            role=role,
         )
         self._audit.event(
             trace_id=trace_id,
@@ -130,7 +131,7 @@ class AgentOrchestrator:
             plan=plan_data,
         )
 
-    def evaluate_security(self, query: str, user_id: str, context: dict[str, Any], approved: bool = False) -> dict[str, Any]:
+    def evaluate_security(self, query: str, user_id: str, context: dict[str, Any], approved: bool = False, role: str | None = None) -> dict[str, Any]:
         plan = self._planner.plan(query, context, self._executor.tool_manifest())
         return {
             "intent": plan.intent,
@@ -141,6 +142,7 @@ class AgentOrchestrator:
                 user_id=user_id,
                 raw_query=query,
                 approved=approved,
+                role=role,
             ),
         }
 

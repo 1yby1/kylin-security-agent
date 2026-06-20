@@ -71,3 +71,24 @@ def get_mcp_settings() -> MCPSettings:
         client_user_id=os.getenv("AGENT_MCP_CLIENT_USER", "mcp-client"),
         client_role=os.getenv("AGENT_MCP_CLIENT_ROLE", "viewer"),
     )
+
+
+@dataclass(frozen=True)
+class AuthSettings:
+    token_roles: dict[str, str]
+    default_role: str = "viewer"
+
+
+def get_auth_settings() -> AuthSettings:
+    token_roles: dict[str, str] = {}
+    for env_name, role in (
+        ("AGENT_ADMIN_TOKEN", "admin"),
+        ("AGENT_OPERATOR_TOKEN", "operator"),
+        ("AGENT_VIEWER_TOKEN", "viewer"),
+    ):
+        token = os.getenv(env_name, "").strip()
+        if token:
+            token_roles[token] = role
+    default_role = os.getenv("AGENT_DEFAULT_ROLE", "viewer").strip().lower() or "viewer"
+    return AuthSettings(token_roles=token_roles, default_role=default_role)
+
