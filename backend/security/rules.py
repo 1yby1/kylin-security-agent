@@ -107,6 +107,12 @@ PROHIBITED_PATTERNS = [
     r"(?:关闭|停止|禁用)防火墙",
     r"删除\s+/(?:etc|bin|sbin|usr|var|boot|lib|lib64)(?:\s|/|$)",
     r"\b(?:rm|rmdir)\b.*\s/(?:etc|bin|sbin|usr|var|boot|lib|lib64)(?:\s|/|$)",
+    # fork 炸弹：:(){ :|:& };: 及其常见空白变体
+    r":\s*\(\s*\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:",
+    # 远程脚本管道执行：curl/wget ... | (sudo) sh/bash/zsh/dash/ksh
+    r"\b(?:curl|wget)\b.*\|\s*(?:sudo\s+)?\b(?:ba|z|da|k)?sh\b",
+    # 向块设备写盘重定向：> /dev/sda、/dev/nvme0n1 等
+    r">\s*/dev/(?:sd|hd|vd|nvme|mmcblk|xvd)",
 ]
 
 DANGEROUS_COMMAND_PATTERNS = [

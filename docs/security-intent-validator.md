@@ -10,7 +10,7 @@ Agent tool call. It runs before any tool handler is invoked.
 | Low | View system status, processes, ports, logs, service status | Allow and audit |
 | Medium | Restart allowlisted services, clean safe temp directories, kill non-system processes | Require `operator` or `admin` role and secondary confirmation |
 | High | Delete system directories, modify system config, change permissions, stop protected services, modify users | Block by default |
-| Prohibited | `rm -rf /`, `chmod 777 /etc/passwd`, `mkfs`, `dd of=/dev/...`, closing firewall, deleting `/etc`, `/bin`, `/usr`, `/var` | Always block |
+| Prohibited | `rm -rf /`, `chmod 777 /etc/passwd`, `mkfs`, `dd of=/dev/...`, fork bomb `:(){ :|:& };:`, piping remote scripts to a shell (`curl ... | sh`), redirecting to block devices (`> /dev/sda`), closing firewall, deleting `/etc`, `/bin`, `/usr`, `/var` | Always block |
 
 ## Mandatory Checks
 
