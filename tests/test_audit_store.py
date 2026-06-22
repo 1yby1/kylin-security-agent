@@ -8,6 +8,8 @@ from unittest import mock
 
 from backend.config import get_audit_settings
 from backend.audit.store import AuditStore, get_audit_store, reset_audit_stores
+from backend.audit.logger import AuditLogger
+from backend.agent.planner import Plan
 
 
 def _event(stage="received_instruction", trace_id="t1", user_id="u1", status="ok", data=None):
@@ -109,6 +111,57 @@ class AuditStoreTests(unittest.TestCase):
         result = self.store.verify_chain()
         self.assertFalse(result["tail_ok"])
         self.assertFalse(result["ok"])
+
+
+class AuditLoggerDelegationTests(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.path = Path(self._tmp.name) / "audit.db"
+
+    def tearDown(self):
+        reset_audit_stores()
+        self._tmp.cleanup()
+
+    def test_event_and_read_recent_roundtrip(self):
+        logger = AuditLogger(path=self.path)
+        logger.event(trace_id="t1", stage="received_instruction", user_id="u", status="ok", data={"x": 1})
+        rows = logger.read_recent(limit=10, trace_id="t1")
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["data"], {"x": 1})
+
+    def test_write_creates_summary_row(self):
+        logger = AuditLogger(path=self.path)
+        plan = Plan(intent="inspection", tools=["system"], arguments={})
+        logger.write("u", "q", plan, "completed", {"ok": True})
+        rows = logger.read_recent(limit=10)
+        summary = [r for r in rows if r["stage"] == "summary"]
+        self.assertEqual(len(summary), 1)
+        self.assertEqual(summary[0]["trace_id"], "")
+        self.assertEqual(summary[0]["data"]["intent"], "inspection")
+
+    def test_shared_store_chain_not_forked(self):
+        a = AuditLogger(path=self.path)
+        b = AuditLogger(path=self.path)
+        a.event(trace_id="t", stage="s1", user_id="u", status="ok", data={"n": 1})
+        b.event(trace_id="t", stage="s2", user_id="u", status="ok", data={"n": 2})
+        a.event(trace_id="t", stage="s3", user_id="u", status="ok", data={"n": 3})
+        store = get_audit_store(self.path)
+        result = store.verify_chain()
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["count"], 3)
+
+    def test_fail_closed_raises_when_enabled(self):
+        logger = AuditLogger(path=self.path)
+        with mock.patch.object(logger._store, "append", side_effect=RuntimeError("disk")):
+            with mock.patch.dict(os.environ, {"AGENT_AUDIT_FAIL_CLOSED": "true"}, clear=False):
+                with self.assertRaises(RuntimeError):
+                    logger.event(trace_id="t", stage="s", user_id="u", status="ok", data={})
+
+    def test_best_effort_swallows_when_disabled(self):
+        logger = AuditLogger(path=self.path)
+        with mock.patch.object(logger._store, "append", side_effect=RuntimeError("disk")):
+            with mock.patch.dict(os.environ, {"AGENT_AUDIT_FAIL_CLOSED": "false"}, clear=False):
+                logger.event(trace_id="t", stage="s", user_id="u", status="ok", data={})  # 不抛
 
 
 if __name__ == "__main__":
