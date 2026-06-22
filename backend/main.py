@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import contextlib
+import json
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 from fastapi import FastAPI, Header
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -301,5 +302,31 @@ def run_tool(tool_name: str, request: ToolRequest, authorization: str | None = H
 
 
 @app.get("/api/audit/recent")
-def audit_recent(limit: int = 100, trace_id: str | None = None) -> dict[str, Any]:
+def audit_recent(
+    limit: int = 100,
+    trace_id: str | None = None,
+    user_id: str | None = None,
+    status: str | None = None,
+) -> dict[str, Any]:
+    if user_id or status:
+        records = audit.export(limit=limit, trace_id=trace_id)
+        records = [
+            record
+            for record in records
+            if (not user_id or record.get("user_id") == user_id)
+            and (not status or record.get("status") == status)
+        ]
+        return {"records": records}
     return {"records": audit.read_recent(limit=limit, trace_id=trace_id)}
+
+
+@app.get("/api/audit/verify")
+def audit_verify() -> dict[str, Any]:
+    return audit.verify_chain()
+
+
+@app.get("/api/audit/export")
+def audit_export(limit: int = 1000, trace_id: str | None = None) -> PlainTextResponse:
+    records = audit.export(limit=limit, trace_id=trace_id)
+    body = "\n".join(json.dumps(record, ensure_ascii=False) for record in records)
+    return PlainTextResponse(body, media_type="application/x-ndjson")
