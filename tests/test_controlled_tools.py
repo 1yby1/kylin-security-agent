@@ -13,11 +13,18 @@ from backend.mcp_tools.registry import ToolDefinition, ToolRegistry
 
 class ControlledToolSecurityTests(unittest.TestCase):
     def setUp(self) -> None:
+        from backend.audit.store import reset_audit_stores
+
+        reset_audit_stores()
         self._tmp = tempfile.TemporaryDirectory()
-        os.environ["AGENT_AUDIT_LOG_PATH"] = os.path.join(self._tmp.name, "audit.log")
+        os.environ["AGENT_AUDIT_DB_PATH"] = os.path.join(self._tmp.name, "audit.db")
         self.agent = AgentOrchestrator()
 
     def tearDown(self) -> None:
+        from backend.audit.store import reset_audit_stores
+
+        reset_audit_stores()
+        os.environ.pop("AGENT_AUDIT_DB_PATH", None)
         self._tmp.cleanup()
 
     def evaluate(self, query: str, context: dict, approved: bool, user_id: str = "operator1") -> dict:
