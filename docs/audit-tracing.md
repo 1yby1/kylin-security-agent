@@ -1,27 +1,49 @@
 # Audit Tracing
 
-Every user request is written as a JSONL audit trace. A request receives one
-`trace_id`, and each stage appends one event to the audit log.
+Every user request is persisted to a SQLite audit store
+(`backend/audit/store.py`). A request receives one `trace_id`, and each stage
+appends one event. SQLite is the authoritative source; `AuditLogger` is a thin
+facade that delegates to a process-wide shared `AuditStore` (one instance per DB
+path), so concurrent loggers never fork the hash chain.
+
+## Tamper Evidence
+
+Each event is linked into a hash chain (`prev_hash` + event fields →
+`hash = sha256(...)`), and an `audit_meta` row tracks `last_hash` and
+`event_count` in the same transaction. `verify_chain()` recomputes every hash to
+detect content tampering / mid-chain deletion, and compares row count and the
+last hash against `audit_meta` to detect tail truncation.
+
+Threat model: this is tamper-evident, not cryptographically tamper-proof. An
+attacker with full write access who can rebuild the entire chain and `audit_meta`
+together is not stopped by this scheme (that requires external signing/anchoring,
+left as future work).
 
 ## Audit Path
 
 Development default:
 
 ```text
-backend/audit/logs/audit.log
+backend/audit/logs/audit.db
 ```
 
 Production default from systemd:
 
 ```text
-/var/log/software-cup-ops/audit.log
+/var/lib/software-cup-ops/audit.db
 ```
 
 Configured by:
 
 ```text
-AGENT_AUDIT_LOG_PATH
+AGENT_AUDIT_DB_PATH
 ```
+
+The store runs in WAL mode, so `audit.db-wal` / `audit.db-shm` sidecar files are
+created alongside the DB and must live in a writable path. `AGENT_AUDIT_FAIL_CLOSED`
+(default `false`) controls behavior on write failure: best-effort when `false`,
+fail-closed (request errors out so an un-audited action is not executed) when
+`true`.
 
 ## Stages
 
@@ -70,16 +92,30 @@ Blocked requests keep `executed_commands` empty because no tool command was run.
 
 ## Query API
 
-Recent audit events:
+Recent audit events (now backed by indexed SQL queries; the response shape is
+unchanged and additionally includes each event's `hash`):
 
 ```bash
 curl "http://127.0.0.1:8000/api/audit/recent?limit=100"
 ```
 
-Events for one request:
+Events for one request, or filtered by `user_id` / `status`:
 
 ```bash
 curl "http://127.0.0.1:8000/api/audit/recent?trace_id=<TRACE_ID>"
+curl "http://127.0.0.1:8000/api/audit/recent?user_id=operator&status=blocked"
+```
+
+Verify chain integrity (returns `ok` / `broken_at` / `count` / `tail_ok`):
+
+```bash
+curl "http://127.0.0.1:8000/api/audit/verify"
+```
+
+Export events as NDJSON (one JSON object per line):
+
+```bash
+curl "http://127.0.0.1:8000/api/audit/export?limit=1000"
 ```
 
 ## Coverage

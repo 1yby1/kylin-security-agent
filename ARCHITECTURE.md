@@ -9,7 +9,7 @@
 - Agent 调度：Python Planner、Executor 和 Orchestrator 模块。
 - MCP-like 工具层：Python 工具函数封装系统概览、进程、端口、日志、服务和磁盘诊断能力。
 - 数据库：当前使用 SQLite 初始化基础表，后续可扩展到 PostgreSQL。
-- 审计日志：JSONL 文件，按 `trace_id` 串联全链路事件。
+- 审计日志：SQLite 权威存储（hash 链 + `audit_meta` 防篡改），按 `trace_id` 串联全链路事件，支持索引查询、链校验与 NDJSON 导出。
 - 大模型：优先通过 DeepSeek 或 Qwen API 接入，后续可评估本地部署。
 - 系统命令：只能通过白名单命令模板调用 `subprocess`。
 - 部署目标：麒麟高级服务器 V11，LoongArch 架构。
@@ -24,7 +24,7 @@
 6. `backend.agent.executor.ToolExecutor` 在安全校验通过后调用注册工具。
 7. 工具函数通过 `backend/mcp_tools/command_runner.py` 中的命令模板执行允许的系统命令。
 8. `backend.agent.llm_client.LLMClient.conclude()` 或本地兜底逻辑生成结构化结论。
-9. `backend.audit.logger.AuditLogger` 写入 JSONL 审计事件。
+9. `backend.audit.logger.AuditLogger`（薄门面）委托进程内共享的 `backend.audit.store.AuditStore` 写入 SQLite 审计事件。
 
 ## LLM 环境变量
 
@@ -140,7 +140,9 @@ export AGENT_STRICT_LEAST_PRIVILEGE=true
 
 ## 审计追踪
 
-每个用户请求都会生成一个 `trace_id`。审计事件默认写入 `backend/audit/logs/audit.log`，可通过 `AGENT_AUDIT_LOG_PATH` 覆盖。
+每个用户请求都会生成一个 `trace_id`。审计落地 `backend/audit/store.py::AuditStore`（SQLite，进程内按 DB 路径共享单实例），`AuditLogger` 为薄门面。默认写入 `backend/audit/logs/audit.db`，可通过 `AGENT_AUDIT_DB_PATH` 覆盖；生产经 systemd 指向 `/var/lib/software-cup-ops/audit.db`。
+
+事件经 hash 链（`prev_hash` + 字段 → `hash`）与 `audit_meta`（`last_hash`/`event_count`，同事务更新）链接，`verify_chain()` 可发现内容篡改、中间删除与尾部截断（tamper-evident，非密码学级防篡改）。查询走索引，`/api/audit/verify` 校验完整性、`/api/audit/export` 导出 NDJSON。写入失败行为由 `AGENT_AUDIT_FAIL_CLOSED` 控制（默认 best-effort，可设 fail-closed）。
 
 当前审计阶段包括：
 
