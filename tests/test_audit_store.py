@@ -78,6 +78,38 @@ class AuditStoreTests(unittest.TestCase):
         b = get_audit_store(self.path)
         self.assertIs(a, b)
 
+    def test_clean_chain_verifies(self):
+        for i in range(3):
+            self.store.append(_event(data={"i": i}))
+        result = self.store.verify_chain()
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["tail_ok"])
+        self.assertIsNone(result["broken_at"])
+        self.assertEqual(result["count"], 3)
+
+    def test_empty_chain_verifies(self):
+        result = self.store.verify_chain()
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["count"], 0)
+
+    def test_tampered_row_detected(self):
+        for i in range(3):
+            self.store.append(_event(data={"i": i}))
+        # 绕过 store 直接改库，模拟篡改
+        self.store._conn.execute("UPDATE audit_events SET data_json = '{\"i\": 99}' WHERE id = 2")
+        result = self.store.verify_chain()
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["broken_at"], 2)
+
+    def test_tail_deletion_detected(self):
+        for i in range(3):
+            self.store.append(_event(data={"i": i}))
+        # 删最后一行但不动 audit_meta
+        self.store._conn.execute("DELETE FROM audit_events WHERE id = 3")
+        result = self.store.verify_chain()
+        self.assertFalse(result["tail_ok"])
+        self.assertFalse(result["ok"])
+
 
 if __name__ == "__main__":
     unittest.main()

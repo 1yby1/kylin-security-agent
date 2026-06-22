@@ -142,6 +142,36 @@ class AuditStore:
     def read_recent(self, limit: int = 100, trace_id: str | None = None) -> list[dict[str, Any]]:
         return self.query(limit=limit, trace_id=trace_id)
 
+    def verify_chain(self) -> dict[str, Any]:
+        with self._lock:
+            self._conn.row_factory = sqlite3.Row
+            rows = self._conn.execute(
+                "SELECT id, timestamp, trace_id, stage, user_id, status, data_json, prev_hash, hash "
+                "FROM audit_events ORDER BY id ASC"
+            ).fetchall()
+            meta = self._conn.execute(
+                "SELECT last_hash, event_count FROM audit_meta WHERE id = 1"
+            ).fetchone()
+        prev = _GENESIS
+        for row in rows:
+            expected = _compute_hash(
+                prev,
+                row["timestamp"],
+                row["trace_id"],
+                row["stage"],
+                row["user_id"],
+                row["status"],
+                row["data_json"],
+            )
+            if row["prev_hash"] != prev or row["hash"] != expected:
+                return {"ok": False, "broken_at": row["id"], "count": len(rows), "tail_ok": False}
+            prev = row["hash"]
+        meta_last = meta["last_hash"] if meta else _GENESIS
+        meta_count = meta["event_count"] if meta else 0
+        actual_last = rows[-1]["hash"] if rows else _GENESIS
+        tail_ok = (len(rows) == meta_count) and (actual_last == meta_last)
+        return {"ok": tail_ok, "broken_at": None, "count": len(rows), "tail_ok": tail_ok}
+
     def close(self) -> None:
         with self._lock:
             self._conn.close()
