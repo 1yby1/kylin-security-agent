@@ -13,6 +13,8 @@ Environment=AGENT_STRICT_LEAST_PRIVILEGE=true
 Environment=AGENT_SAFE_WORKDIR=/
 Environment=AGENT_DB_PATH=/var/lib/software-cup-ops/app.db
 Environment=AGENT_AUDIT_LOG_PATH=/var/log/software-cup-ops/audit.log
+Environment=AGENT_AUDIT_DB_PATH=/var/lib/software-cup-ops/audit.db
+EnvironmentFile=-/etc/software-cup-ops/software-cup-ops.env
 ExecStart=/opt/software-cup-ops/.venv/bin/uvicorn backend.main:app --host 0.0.0.0 --port 8000
 Restart=always
 RestartSec=3
