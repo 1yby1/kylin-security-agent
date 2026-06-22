@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 
 
 @dataclass(frozen=True)
@@ -91,4 +92,21 @@ def get_auth_settings() -> AuthSettings:
             token_roles[token] = role
     default_role = os.getenv("AGENT_DEFAULT_ROLE", "viewer").strip().lower() or "viewer"
     return AuthSettings(token_roles=token_roles, default_role=default_role)
+
+
+@dataclass(frozen=True)
+class AuditSettings:
+    db_path: Path
+    fail_closed: bool
+
+
+def get_audit_settings() -> AuditSettings:
+    configured = os.getenv("AGENT_AUDIT_DB_PATH")
+    db_path = (
+        Path(configured)
+        if configured
+        else Path(__file__).resolve().parent / "audit" / "logs" / "audit.db"
+    )
+    fail_closed = os.getenv("AGENT_AUDIT_FAIL_CLOSED", "false").strip().lower() in {"1", "true", "yes"}
+    return AuditSettings(db_path=db_path, fail_closed=fail_closed)
 
