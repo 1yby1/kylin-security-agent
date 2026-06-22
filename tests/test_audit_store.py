@@ -7,6 +7,18 @@ from pathlib import Path
 from unittest import mock
 
 from backend.config import get_audit_settings
+from backend.audit.store import AuditStore, get_audit_store, reset_audit_stores
+
+
+def _event(stage="received_instruction", trace_id="t1", user_id="u1", status="ok", data=None):
+    return {
+        "timestamp": "2026-06-22T00:00:00+00:00",
+        "trace_id": trace_id,
+        "stage": stage,
+        "user_id": user_id,
+        "status": status,
+        "data": data or {"k": "v"},
+    }
 
 
 class AuditSettingsTests(unittest.TestCase):
@@ -24,6 +36,47 @@ class AuditSettingsTests(unittest.TestCase):
             settings = get_audit_settings()
             self.assertEqual(Path(settings.db_path), Path("/tmp/x/audit.db"))
             self.assertTrue(settings.fail_closed)
+
+
+class AuditStoreTests(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.path = Path(self._tmp.name) / "audit.db"
+        self.store = AuditStore(self.path)
+
+    def tearDown(self):
+        self.store.close()
+        reset_audit_stores()
+        self._tmp.cleanup()
+
+    def test_append_then_read_recent(self):
+        self.store.append(_event(data={"a": 1}))
+        rows = self.store.read_recent(limit=10)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["stage"], "received_instruction")
+        self.assertEqual(rows[0]["data"], {"a": 1})
+        self.assertIn("hash", rows[0])
+
+    def test_read_recent_filters_trace_and_orders_oldest_first(self):
+        self.store.append(_event(trace_id="A", data={"n": 1}))
+        self.store.append(_event(trace_id="B", data={"n": 2}))
+        self.store.append(_event(trace_id="A", data={"n": 3}))
+        rows = self.store.read_recent(limit=10, trace_id="A")
+        self.assertEqual([r["data"]["n"] for r in rows], [1, 3])
+
+    def test_query_by_user_and_status(self):
+        self.store.append(_event(user_id="alice", status="blocked"))
+        self.store.append(_event(user_id="bob", status="ok"))
+        rows = self.store.query(limit=10, user_id="alice")
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["user_id"], "alice")
+        rows = self.store.query(limit=10, status="blocked")
+        self.assertEqual(len(rows), 1)
+
+    def test_get_audit_store_shared_per_path(self):
+        a = get_audit_store(self.path)
+        b = get_audit_store(self.path)
+        self.assertIs(a, b)
 
 
 if __name__ == "__main__":
