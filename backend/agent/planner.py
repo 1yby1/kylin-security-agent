@@ -119,6 +119,8 @@ class Planner:
             tools.append("disk")
         if self._contains_any(text, ["登录", "认证", "爆破", "暴力破解", "失败登录", "login", "auth", "brute"]):
             tools.append("auth")
+        if self._contains_any(text, ["防火墙", "firewall", "暴露", "开放端口", "iptables", "exposure"]):
+            tools.append("firewall")
 
         if not tools:
             tools = ["system", "process"]

@@ -43,6 +43,8 @@ COMMAND_TEMPLATES: dict[str, dict[str, list[str]]] = {
         "auth.last": ["last", "-n", "{lines}"],
         "auth.lastb": ["lastb", "-n", "{lines}"],
         "auth.who": ["who"],
+        "firewall.state": ["firewall-cmd", "--state"],
+        "firewall.list_all": ["firewall-cmd", "--list-all"],
     },
 }
 

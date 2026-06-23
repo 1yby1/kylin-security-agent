@@ -3,6 +3,7 @@ from __future__ import annotations
 from backend.mcp_tools import (
     auth_tool,
     disk_tool,
+    firewall_tool,
     process_kill_tool,
     log_tool,
     network_tool,
@@ -201,5 +202,16 @@ def register_builtin_tools(registry: ToolRegistry) -> None:
                 "type": "object",
                 "properties": {"lines": {"type": "integer", "minimum": 1, "maximum": 200}},
             },
+        )
+    )
+    registry.register(
+        ToolDefinition(
+            name="firewall",
+            title="防火墙暴露面工具",
+            description="只读查看 firewalld 运行状态、默认区域开放端口与服务，识别高危暴露面。",
+            category="security",
+            handler=firewall_tool.run,
+            command_templates=["firewall.state", "firewall.list_all"],
+            input_schema={"type": "object", "properties": {}},
         )
     )
