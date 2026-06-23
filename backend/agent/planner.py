@@ -123,14 +123,20 @@ class Planner:
             tools.append("system")
         if "process.kill" not in tools and self._contains_any(text, ["process", "pid", "cpu", "memory", "进程", "内存"]):
             tools.append("process")
-        if self._is_network_diagnostic_request(text):
+        if self._is_network_config_request(text):
+            tools.append("network.config")
+        if self._is_network_diagnostic_request(text) and "network.config" not in tools:
             tools.append("network.diagnostics")
-        elif self._contains_any(text, ["port", "network", "tcp", "udp", "端口", "网络"]):
+        elif "network.config" not in tools and self._contains_any(text, ["port", "network", "tcp", "udp", "端口", "网络"]):
             tools.append("network")
         if self._contains_any(text, ["log", "error", "exception", "日志", "报错", "异常"]):
             tools.append("log")
         if "service.restart" not in tools and self._contains_any(text, ["service", "systemctl", "status", "服务"]):
             tools.append("service")
+        if self._is_package_repo_request(text):
+            tools.append("package.repo")
+        if self._is_top_dirs_request(text):
+            tools.append("disk.top_dirs")
         if self._is_large_file_request(text):
             tools.append("disk.large_files")
         if self._contains_any(text, ["disk", "space", "df", "磁盘", "空间"]):
@@ -158,6 +164,10 @@ class Planner:
             arguments = self._enrich_arguments(text, "disk.large_files", arguments)
         if "network.diagnostics" in tools:
             arguments = self._enrich_arguments(text, "network.diagnostics", arguments)
+        if "disk.top_dirs" in tools:
+            arguments = self._enrich_arguments(text, "disk.top_dirs", arguments)
+        if "package.repo" in tools:
+            arguments = self._enrich_arguments(text, "package.repo", arguments)
 
         return Plan(
             intent=self._infer_intent(text),
@@ -274,6 +284,48 @@ class Planner:
         )
 
     @classmethod
+    def _is_top_dirs_request(cls, text: str) -> bool:
+        return cls._contains_any(
+            text,
+            [
+                "top dirs",
+                "top directories",
+                "目录占用",
+                "目录空间",
+                "哪个目录",
+                "哪些目录",
+                "子目录",
+                "文件夹占用",
+                "du",
+                "谁占",
+                "磁盘满",
+                "空间不足",
+            ],
+        )
+
+    @classmethod
+    def _is_network_config_request(cls, text: str) -> bool:
+        return cls._contains_any(
+            text,
+            [
+                "network config",
+                "ip addr",
+                "ip address",
+                "ip route",
+                "gateway",
+                "route",
+                "resolv.conf",
+                "网络配置",
+                "网卡",
+                "网关",
+                "路由",
+                "dns 配置",
+                "dns配置",
+                "本机 ip",
+            ],
+        )
+
+    @classmethod
     def _is_network_diagnostic_request(cls, text: str) -> bool:
         return cls._contains_any(
             text,
@@ -289,6 +341,24 @@ class Planner:
                 "解析",
                 "网络诊断",
                 "能不能访问",
+            ],
+        )
+
+    @classmethod
+    def _is_package_repo_request(cls, text: str) -> bool:
+        return cls._contains_any(
+            text,
+            [
+                "yum",
+                "dnf",
+                "repo",
+                "repository",
+                "软件源",
+                "仓库",
+                "安装源",
+                "基础依赖",
+                "依赖安装",
+                "包管理",
             ],
         )
 
@@ -376,6 +446,26 @@ class Planner:
                 enriched["count"] = 3
             if "timeout_seconds" not in enriched:
                 enriched["timeout_seconds"] = 3
+            return enriched
+        if tool == "disk.top_dirs":
+            if "path" not in enriched:
+                path = cls._extract_path(text)
+                if path:
+                    enriched["path"] = path
+            if "limit" not in enriched:
+                limit = cls._extract_limit(text)
+                if limit:
+                    enriched["limit"] = limit
+            if "max_depth" not in enriched:
+                max_depth = cls._extract_max_depth(text)
+                if max_depth is not None:
+                    enriched["max_depth"] = max_depth
+            return enriched
+        if tool == "package.repo":
+            if "repo_dir" not in enriched:
+                path = cls._extract_path(text)
+                if path and path.endswith(".repos.d"):
+                    enriched["repo_dir"] = path
             return enriched
         return enriched
 
