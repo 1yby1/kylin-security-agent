@@ -15,7 +15,7 @@ class AgentResponseFieldsTest(unittest.TestCase):
         main.agent.run = self._orig
 
     def test_response_includes_steps_and_suggested_actions(self):
-        def fake_run(*, query, user_id, context, approved, role, session_id=None):
+        def fake_run(*, query, user_id, context, approved, role, session_id=None, owner="anon"):
             return AgentRunResult(
                 trace_id="t1", intent="diagnosis", tools=["service", "log"],
                 approved_required=True, blocked=False, message="ok",

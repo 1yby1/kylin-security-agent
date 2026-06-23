@@ -66,10 +66,11 @@ class AgentOrchestrator:
         approved: bool = False,
         role: str | None = None,
         session_id: str | None = None,
+        owner: str = "anon",
     ) -> AgentRunResult:
         trace_id = uuid4().hex
-        resolved_session_id = self._session_store.resolve_session_id(session_id)
-        conversation_context = self._session_store.context(resolved_session_id)
+        resolved_session_id = self._session_store.resolve_session_id(session_id, owner)
+        conversation_context = self._session_store.context(resolved_session_id, owner)
         planning_context = dict(context)
         if conversation_context:
             planning_context["conversation"] = conversation_context
@@ -107,14 +108,24 @@ class AgentOrchestrator:
                 plan,
                 plan_data,
                 resolved_session_id,
+                owner,
             )
-        return self._run_loop(trace_id, query, user_id, planning_context, role, plan, plan_data, resolved_session_id)
+        return self._run_loop(trace_id, query, user_id, planning_context, role, plan, plan_data, resolved_session_id, owner)
 
     @staticmethod
     def _is_read_only(tools: list[str]) -> bool:
         return bool(tools) and all(tool in LOW_RISK_TOOLS for tool in tools)
 
-    def _run_single(self, trace_id, query, user_id, context, approved, role, plan, plan_data, session_id) -> AgentRunResult:
+    def conversation_context(self, session_id: str | None, owner: str = "anon") -> dict[str, Any]:
+        """Read-only conversation context for the given session and principal.
+
+        Used by the stateless ``/api/agent/plan`` endpoint to inject the same
+        follow-up context ``execute`` uses, without creating or mutating a
+        session. Returns ``{}`` when the session is unknown or owned by a
+        different principal."""
+        return self._session_store.context(session_id, owner)
+
+    def _run_single(self, trace_id, query, user_id, context, approved, role, plan, plan_data, session_id, owner) -> AgentRunResult:
         execution = self._executor.execute(
             plan=plan, user_id=user_id, raw_query=query,
             approved=approved, trace_id=trace_id, role=role,
@@ -141,6 +152,7 @@ class AgentOrchestrator:
         conclusion = self._conclude(query, plan, execution.security, execution.result, execution.blocked)
         context_summary = self._session_store.update(
             session_id,
+            owner=owner,
             query=query,
             plan=plan,
             result=execution.result,
@@ -174,7 +186,7 @@ class AgentOrchestrator:
             context_summary=context_summary,
         )
 
-    def _run_loop(self, trace_id, query, user_id, context, role, first_plan, first_plan_data, session_id) -> AgentRunResult:
+    def _run_loop(self, trace_id, query, user_id, context, role, first_plan, first_plan_data, session_id, owner) -> AgentRunResult:
         max_steps = get_reasoning_settings().max_steps
         executed: set[str] = set()
         combined: dict[str, Any] = {}
@@ -238,6 +250,7 @@ class AgentOrchestrator:
         conclusion = self._conclude(query, first_plan, final_security, combined, blocked)
         context_summary = self._session_store.update(
             session_id,
+            owner=owner,
             query=query,
             plan=first_plan,
             result=combined,
