@@ -6,19 +6,22 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from fastapi import FastAPI, Header
+from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from backend.agent.orchestrator import AgentOrchestrator
 from backend.agent.planner import Plan, Planner
 from backend.audit.logger import AuditLogger
+from backend.config import get_rate_limit_settings
 from backend.database.db import init_db
 from backend.mcp_server.server import build_session_manager
+from backend.observability.metrics import get_metrics
 from backend.security.auth import parse_bearer, resolve_role, session_principal
 from backend.security.least_privilege import runtime_identity
+from backend.security.rate_limit import ConcurrencyGate, RateLimiter, rate_limit_key
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -52,6 +55,47 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+_rl_settings = get_rate_limit_settings()
+_rate_limiter = RateLimiter(_rl_settings.per_minute, 60.0)
+_concurrency = ConcurrencyGate(_rl_settings.max_concurrent)
+
+_HEAVY_PATHS = {"/api/agent/execute", "/api/agent/plan", "/api/security/evaluate"}
+
+
+def _is_heavy(method: str, path: str) -> bool:
+    if method != "POST":
+        return False
+    if path in _HEAVY_PATHS:
+        return True
+    return path.startswith("/api/tools/") and path != "/api/tools"
+
+
+@app.middleware("http")
+async def rate_limit_middleware(request, call_next):
+    path = request.url.path
+    if path.startswith("/api/") and path != "/api/metrics":
+        counted = "/api/tools/{tool_name}" if (path.startswith("/api/tools/") and path != "/api/tools") else path
+        get_metrics().record_request(counted)
+    if _rl_settings.enabled and _is_heavy(request.method, path):
+        token = parse_bearer(request.headers.get("authorization"))
+        client_host = request.client.host if request.client else None
+        key = rate_limit_key(token, client_host)
+        if not _rate_limiter.allow(key):
+            get_metrics().record_rate_limited()
+            return JSONResponse(
+                status_code=429,
+                content={"detail": "请求过于频繁，请稍后重试"},
+                headers={"Retry-After": str(_rate_limiter.retry_after(key))},
+            )
+        if not _concurrency.try_acquire():
+            return JSONResponse(status_code=503, content={"detail": "服务繁忙，请稍后重试"})
+        try:
+            return await call_next(request)
+        finally:
+            _concurrency.release()
+    return await call_next(request)
+
 
 if FRONTEND_DIR.exists():
     app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
@@ -234,6 +278,14 @@ def plan_agent(request: AgentRequest, authorization: str | None = Header(default
 @app.get("/api/security/runtime")
 def security_runtime() -> dict[str, Any]:
     return {"runtime_identity": runtime_identity().to_dict()}
+
+
+@app.get("/api/metrics")
+def metrics_endpoint(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    role = _role_from_header(authorization)
+    if role not in {"operator", "admin"}:
+        raise HTTPException(status_code=403, detail="metrics 仅 operator/admin 可访问")
+    return get_metrics().snapshot()
 
 
 @app.get("/api/llm/status")

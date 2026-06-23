@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import re
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
 from backend.agent.planner import Plan, PlanStep
 from backend.audit.logger import AuditLogger
 from backend.mcp_tools import ToolRegistry, build_registry
+from backend.observability.metrics import get_metrics
 from backend.security.guard import SecurityGuard
 from backend.security.redaction import redact_security_tool_output
 
@@ -118,6 +120,7 @@ class ToolExecutor:
             self._audit_step_security(trace_id, user_id, step, security)
 
             if safety.blocked:
+                get_metrics().record_blocked()
                 step_records.append(self._step_record(step.id, step.tool, "blocked", resolved, {}, security, []))
                 status = (
                     "approval_required"
@@ -140,7 +143,9 @@ class ToolExecutor:
                     status="started",
                     data={"step_id": step.id, "tool": step.tool, "arguments": resolved},
                 )
+            started = time.perf_counter()
             tool_result = self._registry.call(step.tool, resolved)
+            get_metrics().record_tool(step.tool, (time.perf_counter() - started) * 1000.0)
             outputs[step.id] = tool_result
             self._store_result(result_by_tool, step.tool, tool_result)
             tool_commands = self._extract_executed_commands(step.tool, tool_result)
