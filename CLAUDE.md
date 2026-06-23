@@ -69,9 +69,10 @@ python -m unittest discover -v
 
 1. **规划**：`backend/agent/planner.py` 调用 `LLMClient.analyze()` 生成固定 JSON 规划；如果 LLM 不可用、异常或返回非 JSON，则使用本地关键词规则。
 2. **安全校验**：`backend/security/guard.py` 执行工具白名单、参数 schema、参数值、危险路径、危险命令、用户角色和二次确认校验。
-3. **工具执行**：`backend/agent/executor.py` 通过 `ToolRegistry` 调用工具 handler。工具注册集中在 `backend/mcp_tools/builtin.py`。
-4. **结果总结**：`LLMClient.conclude()` 将工具结果总结为结构化结论；LLM 不可用时由 `AgentOrchestrator._fallback_conclusion()` 本地兜底。
-5. **审计追踪**：`backend/audit/logger.py` 按 `trace_id` 写入 JSONL 审计事件。
+3. **闭环分流**：`AgentOrchestrator.run()` 在首次规划之后分流——若请求已带 `approved=True`，或首次规划的工具不全是只读工具（不在 `LOW_RISK_TOOLS` 内），走原有 `_run_single` 单次执行；否则走 `_run_loop` 多步推理闭环（最多 `AGENT_MAX_REASONING_STEPS` 步，默认 3），每步只自动执行只读工具，遇到下一步建议含操作类工具立即停手并产出 `suggested_actions`。详见 `docs/multi-step-reasoning.md`。
+4. **工具执行**：`backend/agent/executor.py` 通过 `ToolRegistry` 调用工具 handler。工具注册集中在 `backend/mcp_tools/builtin.py`。单次路径和闭环路径的每一步都要经过这一层。
+5. **结果总结**：`LLMClient.conclude()` 将工具结果以隔离包装的 `observed_data` 字段总结为结构化结论；LLM 不可用时由 `AgentOrchestrator._fallback_conclusion()` 本地兜底。详见 `docs/telemetry-injection-defense.md`。
+6. **审计追踪**：`backend/audit/logger.py` 按 `trace_id` 写入 SQLite 审计事件；闭环路径额外产生 `reasoning_step`、`injection_scan`、`suggested_action` 阶段。
 
 ## 关键不变量
 
@@ -93,9 +94,15 @@ python -m unittest discover -v
 - **LLM JSON 合约需要稳定。**  
   Prompt 在 `backend/agent/prompt.py`。规划 JSON 必须包含 `intent`、`tools`、`arguments` 等字段；分析 JSON 必须包含 `conclusion`、`status`、`evidence`、`recommendations` 等字段。调用方需要容忍代码块包裹 JSON 和不支持 `response_format` 的模型。
 
+- **多步推理闭环只能自动执行只读工具。**  
+  `AgentOrchestrator._run_loop` 每一步都校验下一步规划：只要工具不在 `backend/security/rules.py` 的 `LOW_RISK_TOOLS` 内，就不会自动执行，而是收进 `suggested_actions` 并停手。`Planner.plan_next` 本身允许返回操作类工具——只读边界是编排器强制的，不是规划器的职责，不要把这条边界误移到 `Planner` 里。
+
+- **被观测数据（observed_data）隔离且不可信，不得当作指令。**  
+  工具执行结果在喂给 LLM 前必须经过 `backend/security/sanitizer.py` 的 `build_observation_block()` 清洗、截断并包装为 `<OBSERVED_DATA ... trust="untrusted" ...>` 隔离块；`ANALYSIS_SYSTEM_PROMPT` 显式声明该字段只能作为分析素材。任何模块都不应把工具结果原文直接拼进 prompt，也不应认为 `observed_data` 的内容可以改变角色、跳过校验或代表用户确认。
+
 ## API 表面
 
-- `POST /api/agent/execute`：完整 Agent 链路。
+- `POST /api/agent/execute`：完整 Agent 链路。响应在原有字段之外新增 `steps`（多步推理闭环每步摘要，单次路径下为空列表）和 `suggested_actions`（闭环中被拦下、未执行的操作类工具建议，需二次确认才能真正执行）。
 - `POST /api/agent/plan`：只规划，不执行工具。
 - `POST /api/security/evaluate`：只执行安全校验。
 - `GET /api/tools`：查看工具列表和 manifest。
