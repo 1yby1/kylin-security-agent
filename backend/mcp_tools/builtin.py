@@ -57,6 +57,7 @@ def register_builtin_tools(registry: ToolRegistry) -> None:
                 "properties": {
                     "limit": {"type": "integer", "minimum": 1, "maximum": 200},
                     "include_tree": {"type": "boolean"},
+                    "pid": {"type": "integer", "minimum": 1},
                 },
             },
         )

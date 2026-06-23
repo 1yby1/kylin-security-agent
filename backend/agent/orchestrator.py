@@ -10,6 +10,7 @@ from backend.agent.executor import ToolExecutor
 from backend.agent.llm_client import LLMConclusion, LLMClient
 from backend.agent.planner import Plan, Planner
 from backend.agent.reason_localizer import localize_reasons
+from backend.agent.session_context import ConversationSessionStore
 from backend.audit.logger import AuditLogger
 from backend.config import get_reasoning_settings
 from backend.security.rules import LOW_RISK_TOOLS
@@ -31,6 +32,8 @@ class AgentRunResult:
     plan: dict[str, Any]
     steps: list[dict[str, Any]] = field(default_factory=list)
     suggested_actions: list[dict[str, Any]] = field(default_factory=list)
+    session_id: str = ""
+    context_summary: str = ""
 
 
 class AgentOrchestrator:
@@ -39,10 +42,12 @@ class AgentOrchestrator:
         planner: Planner | None = None,
         executor: ToolExecutor | None = None,
         llm_client: LLMClient | None = None,
+        session_store: ConversationSessionStore | None = None,
     ) -> None:
         self._executor = executor or ToolExecutor()
         self._llm_client = llm_client or LLMClient()
         self._planner = planner or Planner(self._llm_client)
+        self._session_store = session_store or ConversationSessionStore()
         self._audit = AuditLogger()
 
     @property
@@ -53,16 +58,36 @@ class AgentOrchestrator:
     def planner(self) -> Planner:
         return self._planner
 
-    def run(self, query: str, user_id: str, context: dict[str, Any], approved: bool = False, role: str | None = None) -> AgentRunResult:
+    def run(
+        self,
+        query: str,
+        user_id: str,
+        context: dict[str, Any],
+        approved: bool = False,
+        role: str | None = None,
+        session_id: str | None = None,
+    ) -> AgentRunResult:
         trace_id = uuid4().hex
+        resolved_session_id = self._session_store.resolve_session_id(session_id)
+        conversation_context = self._session_store.context(resolved_session_id)
+        planning_context = dict(context)
+        if conversation_context:
+            planning_context["conversation"] = conversation_context
         self._audit.event(
             trace_id=trace_id,
             stage="received_instruction",
             user_id=user_id,
             status="received",
-            data={"query": query, "context": context, "approved": approved, "role": role},
+            data={
+                "query": query,
+                "context": context,
+                "approved": approved,
+                "role": role,
+                "session_id": resolved_session_id,
+                "context_summary": conversation_context.get("summary", ""),
+            },
         )
-        plan = self._planner.plan(query, context, self._executor.tool_manifest())
+        plan = self._planner.plan(query, planning_context, self._executor.tool_manifest())
         plan_data = self._plan_to_dict(plan)
         self._audit.event(
             trace_id=trace_id,
@@ -72,14 +97,24 @@ class AgentOrchestrator:
             data={"plan": plan_data},
         )
         if approved or not self._is_read_only(plan.tools):
-            return self._run_single(trace_id, query, user_id, context, approved, role, plan, plan_data)
-        return self._run_loop(trace_id, query, user_id, context, role, plan, plan_data)
+            return self._run_single(
+                trace_id,
+                query,
+                user_id,
+                planning_context,
+                approved,
+                role,
+                plan,
+                plan_data,
+                resolved_session_id,
+            )
+        return self._run_loop(trace_id, query, user_id, planning_context, role, plan, plan_data, resolved_session_id)
 
     @staticmethod
     def _is_read_only(tools: list[str]) -> bool:
         return bool(tools) and all(tool in LOW_RISK_TOOLS for tool in tools)
 
-    def _run_single(self, trace_id, query, user_id, context, approved, role, plan, plan_data) -> AgentRunResult:
+    def _run_single(self, trace_id, query, user_id, context, approved, role, plan, plan_data, session_id) -> AgentRunResult:
         execution = self._executor.execute(
             plan=plan, user_id=user_id, raw_query=query,
             approved=approved, trace_id=trace_id, role=role,
@@ -104,6 +139,13 @@ class AgentOrchestrator:
             },
         )
         conclusion = self._conclude(query, plan, execution.security, execution.result, execution.blocked)
+        context_summary = self._session_store.update(
+            session_id,
+            query=query,
+            plan=plan,
+            result=execution.result,
+            conclusion=conclusion,
+        )
         self._audit.event(
             trace_id=trace_id, stage="final_answer", user_id=user_id,
             status=conclusion.get("status", "unknown"), data={"conclusion": conclusion},
@@ -112,7 +154,8 @@ class AgentOrchestrator:
             trace_id=trace_id, stage="trace_complete", user_id=user_id,
             status="blocked" if execution.blocked else "completed",
             data={"query": query, "plan": plan_data, "security": execution.security,
-                  "executed_commands": execution.executed_commands, "final_answer": conclusion},
+                  "executed_commands": execution.executed_commands, "final_answer": conclusion,
+                  "session_id": session_id, "context_summary": context_summary},
         )
         return AgentRunResult(
             trace_id=trace_id,
@@ -127,9 +170,11 @@ class AgentOrchestrator:
             conclusion=conclusion,
             plan=plan_data,
             steps=execution.steps,
+            session_id=session_id,
+            context_summary=context_summary,
         )
 
-    def _run_loop(self, trace_id, query, user_id, context, role, first_plan, first_plan_data) -> AgentRunResult:
+    def _run_loop(self, trace_id, query, user_id, context, role, first_plan, first_plan_data, session_id) -> AgentRunResult:
         max_steps = get_reasoning_settings().max_steps
         executed: set[str] = set()
         combined: dict[str, Any] = {}
@@ -191,6 +236,13 @@ class AgentOrchestrator:
 
         final_security = pending_security or last_security
         conclusion = self._conclude(query, first_plan, final_security, combined, blocked)
+        context_summary = self._session_store.update(
+            session_id,
+            query=query,
+            plan=first_plan,
+            result=combined,
+            conclusion=conclusion,
+        )
         self._audit.event(
             trace_id=trace_id, stage="final_answer", user_id=user_id,
             status=conclusion.get("status", "unknown"),
@@ -200,13 +252,15 @@ class AgentOrchestrator:
             trace_id=trace_id, stage="trace_complete", user_id=user_id,
             status="blocked" if blocked else "completed",
             data={"query": query, "plan": first_plan_data, "steps": steps,
-                  "suggested_actions": suggested, "security": final_security, "final_answer": conclusion},
+                  "suggested_actions": suggested, "security": final_security, "final_answer": conclusion,
+                  "session_id": session_id, "context_summary": context_summary},
         )
         return AgentRunResult(
             trace_id=trace_id, intent=first_plan.intent, tools=sorted(executed),
             approved_required=bool(suggested), blocked=blocked, message=message,
             result=combined, security=final_security, executed_commands=commands,
             conclusion=conclusion, plan=first_plan_data, steps=steps, suggested_actions=suggested,
+            session_id=session_id, context_summary=context_summary,
         )
 
     @staticmethod
