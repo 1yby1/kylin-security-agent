@@ -36,13 +36,14 @@ def scan_injection(text: str) -> list[str]:
 
 def wrap_untrusted(text: str, source: str) -> str:
     nonce = secrets.token_hex(3)
+    escaped_source = source.replace('"', '&quot;')
     return (
-        f'<OBSERVED_DATA source="{source}" trust="untrusted" nonce={nonce}>\n'
+        f'<OBSERVED_DATA source="{escaped_source}" trust="untrusted" nonce={nonce}>\n'
         f"{text}\n"
         f"</OBSERVED_DATA nonce={nonce}>"
     )
 
 
 def build_observation_block(tool_result: dict[str, Any], max_len: int = 2000) -> str:
-    serialized = json.dumps(tool_result, ensure_ascii=False)
+    serialized = json.dumps(tool_result, ensure_ascii=False, default=str)
     return wrap_untrusted(sanitize_output(serialized, max_len), source="tool_result")
