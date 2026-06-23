@@ -9,6 +9,7 @@ from typing import Any
 
 from backend.agent.prompt import ANALYSIS_SYSTEM_PROMPT, PLANNING_SYSTEM_PROMPT
 from backend.config import LLMSettings, get_llm_settings
+from backend.observability.metrics import get_metrics
 from backend.security.sanitizer import build_observation_block
 
 
@@ -202,6 +203,7 @@ class LLMClient:
         if body is None and "response_format" in payload:
             payload.pop("response_format", None)
             body = self._post_chat(payload)
+        get_metrics().record_llm(body is not None)
         if body is None:
             return None
         return body.get("choices", [{}])[0].get("message", {}).get("content", "")
