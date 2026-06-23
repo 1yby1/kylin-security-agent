@@ -75,7 +75,8 @@ def _is_heavy(method: str, path: str) -> bool:
 async def rate_limit_middleware(request, call_next):
     path = request.url.path
     if path.startswith("/api/") and path != "/api/metrics":
-        get_metrics().record_request(path)
+        counted = "/api/tools/{tool_name}" if (path.startswith("/api/tools/") and path != "/api/tools") else path
+        get_metrics().record_request(counted)
     if _rl_settings.enabled and _is_heavy(request.method, path):
         token = parse_bearer(request.headers.get("authorization"))
         client_host = request.client.host if request.client else None
