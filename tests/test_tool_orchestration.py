@@ -194,15 +194,32 @@ class ToolOrchestrationTests(unittest.TestCase):
         self.assertEqual(statuses["s2"], "blocked")
         self.assertNotIn("s3", statuses)
 
-    def test_string_pid_reference_fails_schema_at_target_step(self) -> None:
-        # A reference keeps its native type: a string pid must not satisfy an
-        # integer schema, so the chain is blocked at the consuming step.
+    def test_numeric_string_reference_is_coerced_to_int(self) -> None:
+        # process-style tools emit pid as a string; schema-directed coercion
+        # turns it into an int so a process -> process.kill style chain works.
         plan = Plan(
             intent="diagnosis",
             tools=["probe.str", "sink"],
             steps=[
                 PlanStep(id="s1", tool="probe.str", arguments={}),
                 PlanStep(id="s2", tool="sink", arguments={"pid": "${s1.value.pid}"}),
+            ],
+        )
+        result = self._execute(plan)
+        self.assertFalse(result.blocked)
+        self.assertEqual(result.result["sink"]["received_pid"], 4321)
+        self.assertIsInstance(result.result["sink"]["received_pid"], int)
+        self.assertEqual(result.steps[1]["arguments"]["pid"], 4321)
+
+    def test_non_numeric_string_reference_still_fails_schema(self) -> None:
+        # Coercion only applies to clean integer literals; a non-numeric value
+        # is left as a string and rejected by the integer schema.
+        plan = Plan(
+            intent="diagnosis",
+            tools=["probe", "sink"],
+            steps=[
+                PlanStep(id="s1", tool="probe", arguments={}),
+                PlanStep(id="s2", tool="sink", arguments={"pid": "${s1.analysis.top[0].name}"}),
             ],
         )
         result = self._execute(plan)

@@ -17,6 +17,8 @@ RISK_ORDER = {"low": 1, "medium": 2, "high": 3, "prohibited": 4}
 # (an int pid stays an int) and no string concatenation/injection is possible.
 REFERENCE_PATTERN = re.compile(r"^\$\{([^}]+)\}$")
 _HAS_REFERENCE = re.compile(r"\$\{[^}]+\}")
+# A clean integer literal, used for schema-directed string -> int coercion.
+_INT_LITERAL = re.compile(r"-?\d+")
 
 
 @dataclass(frozen=True)
@@ -58,7 +60,8 @@ class ToolExecutor:
             if self._has_unresolved_references(step.arguments):
                 step_securities.append(self._deferred_decision(step))
                 continue
-            security = self._check_step(step.tool, step.arguments, raw_query, user_id, approved, role)
+            coerced = self._coerce_arguments(step.tool, step.arguments)
+            security = self._check_step(step.tool, coerced, raw_query, user_id, approved, role)
             security["step_id"] = step.id
             step_securities.append(security)
         return self._aggregate_security(step_securities, blocked_step=None)
@@ -96,6 +99,7 @@ class ToolExecutor:
                     approved_required=False, message=resolve_error, status="blocked",
                 )
 
+            resolved = self._coerce_arguments(step.tool, resolved)
             safety = self._guard.check(
                 raw_query=raw_query,
                 tools=[step.tool],
@@ -314,6 +318,29 @@ class ToolExecutor:
             executed_commands=[],
             steps=[],
         )
+
+    def _coerce_arguments(self, tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Schema-directed coercion of numeric-string args to int.
+
+        A reference resolves to whatever type the producing tool emitted, and
+        some tools report numeric fields as strings (e.g. ``process`` yields a
+        string pid). When the target tool's input schema declares a key as
+        ``integer`` and the value is a clean integer literal, coerce it so a
+        chain like ``process -> process.kill`` type-checks. Non-numeric strings
+        are left untouched and will still be rejected by schema validation.
+        """
+        definition = self._registry.get(tool)
+        if definition is None:
+            return arguments
+        properties = definition.input_schema.get("properties", {})
+        coerced = dict(arguments)
+        for key, rule in properties.items():
+            if rule.get("type") != "integer":
+                continue
+            value = coerced.get(key)
+            if isinstance(value, str) and _INT_LITERAL.fullmatch(value.strip()):
+                coerced[key] = int(value.strip())
+        return coerced
 
     @staticmethod
     def _store_result(result_by_tool: dict[str, Any], tool: str, value: Any) -> str:
