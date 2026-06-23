@@ -56,6 +56,20 @@ class Planner:
     the keyword rules with a model call that returns the same Plan shape.
     """
 
+    NETWORK_DIAGNOSTIC_TARGETS = {
+        "localhost",
+        "127.0.0.1",
+        "::1",
+        "updates.kylinos.cn",
+        "mirrors.aliyun.com",
+        "repo.huaweicloud.com",
+        "mirrors.tuna.tsinghua.edu.cn",
+        "www.baidu.com",
+        "114.114.114.114",
+        "223.5.5.5",
+        "8.8.8.8",
+    }
+
     def __init__(self, llm_client: LLMClient | None = None) -> None:
         self._llm_client = llm_client or LLMClient()
 
@@ -109,12 +123,22 @@ class Planner:
             tools.append("system")
         if "process.kill" not in tools and self._contains_any(text, ["process", "pid", "cpu", "memory", "进程", "内存"]):
             tools.append("process")
-        if self._contains_any(text, ["port", "network", "tcp", "udp", "ping", "端口", "网络"]):
+        if self._is_network_config_request(text):
+            tools.append("network.config")
+        if self._is_network_diagnostic_request(text) and "network.config" not in tools:
+            tools.append("network.diagnostics")
+        elif "network.config" not in tools and self._contains_any(text, ["port", "network", "tcp", "udp", "端口", "网络"]):
             tools.append("network")
         if self._contains_any(text, ["log", "error", "exception", "日志", "报错", "异常"]):
             tools.append("log")
         if "service.restart" not in tools and self._contains_any(text, ["service", "systemctl", "status", "服务"]):
             tools.append("service")
+        if self._is_package_repo_request(text):
+            tools.append("package.repo")
+        if self._is_top_dirs_request(text):
+            tools.append("disk.top_dirs")
+        if self._is_large_file_request(text):
+            tools.append("disk.large_files")
         if self._contains_any(text, ["disk", "space", "df", "磁盘", "空间"]):
             tools.append("disk")
 
@@ -136,6 +160,14 @@ class Planner:
                 arguments["path"] = temp_path
         if "temp.clean" in tools:
             arguments = self._enrich_arguments(text, "temp.clean", arguments)
+        if "disk.large_files" in tools:
+            arguments = self._enrich_arguments(text, "disk.large_files", arguments)
+        if "network.diagnostics" in tools:
+            arguments = self._enrich_arguments(text, "network.diagnostics", arguments)
+        if "disk.top_dirs" in tools:
+            arguments = self._enrich_arguments(text, "disk.top_dirs", arguments)
+        if "package.repo" in tools:
+            arguments = self._enrich_arguments(text, "package.repo", arguments)
 
         return Plan(
             intent=self._infer_intent(text),
@@ -231,6 +263,105 @@ class Planner:
     def _contains_any(text: str, words: list[str]) -> bool:
         return any(word in text for word in words)
 
+    @classmethod
+    def _is_large_file_request(cls, text: str) -> bool:
+        return cls._contains_any(
+            text,
+            [
+                "large file",
+                "largest",
+                "big file",
+                "du",
+                "大文件",
+                "最大文件",
+                "谁占",
+                "占空间",
+                "占用空间",
+                "空间占用",
+                "磁盘满",
+                "空间不足",
+            ],
+        )
+
+    @classmethod
+    def _is_top_dirs_request(cls, text: str) -> bool:
+        return cls._contains_any(
+            text,
+            [
+                "top dirs",
+                "top directories",
+                "目录占用",
+                "目录空间",
+                "哪个目录",
+                "哪些目录",
+                "子目录",
+                "文件夹占用",
+                "du",
+                "谁占",
+                "磁盘满",
+                "空间不足",
+            ],
+        )
+
+    @classmethod
+    def _is_network_config_request(cls, text: str) -> bool:
+        return cls._contains_any(
+            text,
+            [
+                "network config",
+                "ip addr",
+                "ip address",
+                "ip route",
+                "gateway",
+                "route",
+                "resolv.conf",
+                "网络配置",
+                "网卡",
+                "网关",
+                "路由",
+                "dns 配置",
+                "dns配置",
+                "本机 ip",
+            ],
+        )
+
+    @classmethod
+    def _is_network_diagnostic_request(cls, text: str) -> bool:
+        return cls._contains_any(
+            text,
+            [
+                "ping",
+                "dns",
+                "resolve",
+                "resolution",
+                "reachable",
+                "connectivity",
+                "连通",
+                "连通性",
+                "解析",
+                "网络诊断",
+                "能不能访问",
+            ],
+        )
+
+    @classmethod
+    def _is_package_repo_request(cls, text: str) -> bool:
+        return cls._contains_any(
+            text,
+            [
+                "yum",
+                "dnf",
+                "repo",
+                "repository",
+                "软件源",
+                "仓库",
+                "安装源",
+                "基础依赖",
+                "依赖安装",
+                "包管理",
+            ],
+        )
+
     @staticmethod
     def _infer_intent(text: str) -> str:
         if any(word in text for word in ["restart", "stop", "kill", "terminate", "clean", "删除", "停止", "重启", "清理", "杀死", "结束", "终止"]):
@@ -270,31 +401,129 @@ class Planner:
 
     @classmethod
     def _enrich_arguments(cls, text: str, tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
-        """Fill ``temp.clean`` arguments the planner can read from explicit text.
+        """Fill tool arguments the planner can read from explicit text.
 
         This is fill-if-missing only: it never overrides a value the LLM already
-        produced. ``path`` and ``max_age_hours`` are taken from what the user
-        literally wrote (e.g. ``/tmp``, ``超过 24 小时``); ``dry_run`` is set true
-        only when the request explicitly asks for a preview / no-delete. Because
-        it only fills gaps with the user's own stated values (and only ever sets
-        the safe ``dry_run=true`` direction), it honors user intent rather than
-        rewriting the model's decision — which matters because the LLM often
-        drops the required ``path``.
+        produced. For controlled tools it only fills values the user literally
+        wrote (and the safe ``dry_run=true`` direction), so enrichment preserves
+        user intent instead of rewriting the model's decision.
         """
-        if tool != "temp.clean":
-            return arguments
         enriched = dict(arguments)
-        if "path" not in enriched:
-            temp_path = cls._extract_temp_path(text)
-            if temp_path:
-                enriched["path"] = temp_path
-        if "max_age_hours" not in enriched:
-            hours = cls._extract_max_age_hours(text)
-            if hours:
-                enriched["max_age_hours"] = hours
-        if "dry_run" not in enriched and cls._is_temp_clean_preview(text):
-            enriched["dry_run"] = True
+        if tool == "temp.clean":
+            if "path" not in enriched:
+                temp_path = cls._extract_temp_path(text)
+                if temp_path:
+                    enriched["path"] = temp_path
+            if "max_age_hours" not in enriched:
+                hours = cls._extract_max_age_hours(text)
+                if hours:
+                    enriched["max_age_hours"] = hours
+            if "dry_run" not in enriched and cls._is_temp_clean_preview(text):
+                enriched["dry_run"] = True
+            return enriched
+        if tool == "disk.large_files":
+            if "path" not in enriched:
+                path = cls._extract_path(text)
+                if path:
+                    enriched["path"] = path
+            if "limit" not in enriched:
+                limit = cls._extract_limit(text)
+                if limit:
+                    enriched["limit"] = limit
+            if "min_size_mb" not in enriched:
+                min_size_mb = cls._extract_min_size_mb(text)
+                if min_size_mb is not None:
+                    enriched["min_size_mb"] = min_size_mb
+            if "max_depth" not in enriched:
+                max_depth = cls._extract_max_depth(text)
+                if max_depth is not None:
+                    enriched["max_depth"] = max_depth
+            return enriched
+        if tool == "network.diagnostics":
+            if "target" not in enriched:
+                enriched["target"] = cls._extract_network_target(text)
+            if "count" not in enriched:
+                enriched["count"] = 3
+            if "timeout_seconds" not in enriched:
+                enriched["timeout_seconds"] = 3
+            return enriched
+        if tool == "disk.top_dirs":
+            if "path" not in enriched:
+                path = cls._extract_path(text)
+                if path:
+                    enriched["path"] = path
+            if "limit" not in enriched:
+                limit = cls._extract_limit(text)
+                if limit:
+                    enriched["limit"] = limit
+            if "max_depth" not in enriched:
+                max_depth = cls._extract_max_depth(text)
+                if max_depth is not None:
+                    enriched["max_depth"] = max_depth
+            return enriched
+        if tool == "package.repo":
+            if "repo_dir" not in enriched:
+                path = cls._extract_path(text)
+                if path and path.endswith(".repos.d"):
+                    enriched["repo_dir"] = path
+            return enriched
         return enriched
+
+    @staticmethod
+    def _extract_path(text: str) -> str:
+        paths = re.findall(r"(?<![\w.-])/(?:[\w.+-]+/?)+", text)
+        return paths[0].rstrip("/") if paths else ""
+
+    @staticmethod
+    def _extract_limit(text: str) -> int:
+        patterns = [
+            r"(?:top|limit)\s*(\d{1,3})",
+            r"(?:前|最多|列出)\s*(\d{1,3})\s*(?:个|条)?",
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, text, flags=re.IGNORECASE)
+            if match:
+                return max(1, min(int(match.group(1)), 100))
+        return 0
+
+    @staticmethod
+    def _extract_min_size_mb(text: str) -> int | None:
+        pattern = r"(?:超过|大于|over|>)\s*(\d{1,6})\s*(gb|g|mb|m)\b"
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match is None:
+            return None
+        value = int(match.group(1))
+        unit = match.group(2).lower()
+        if unit in {"gb", "g"}:
+            value *= 1024
+        return max(0, min(value, 1024 * 1024))
+
+    @staticmethod
+    def _extract_max_depth(text: str) -> int | None:
+        patterns = [
+            r"max_depth\s*[:=]?\s*(\d{1,2})",
+            r"(?:深度|层级)\s*(\d{1,2})",
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, text, flags=re.IGNORECASE)
+            if match:
+                return max(0, min(int(match.group(1)), 20))
+        return None
+
+    @classmethod
+    def _extract_network_target(cls, text: str) -> str:
+        for target in sorted(cls.NETWORK_DIAGNOSTIC_TARGETS, key=len, reverse=True):
+            if target in text:
+                return target
+        domain = re.search(r"\b(?:[a-z0-9-]+\.)+[a-z]{2,}\b", text, flags=re.IGNORECASE)
+        if domain:
+            return domain.group(0).lower().rstrip(".")
+        ipv4 = re.search(r"\b(?:\d{1,3}\.){3}\d{1,3}\b", text)
+        if ipv4:
+            return ipv4.group(0)
+        if cls._contains_any(text, ["kylin", "麒麟", "yum", "dnf", "repo", "软件源", "更新源", "updates"]):
+            return "updates.kylinos.cn"
+        return "localhost"
 
     @staticmethod
     def _is_temp_clean_preview(text: str) -> bool:

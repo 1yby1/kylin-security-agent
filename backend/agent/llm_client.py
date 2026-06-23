@@ -17,11 +17,16 @@ ALLOWED_TOOLS = {
     "process",
     "process.kill",
     "network",
+    "network.diagnostics",
+    "network.config",
     "log",
     "service",
     "service.restart",
     "temp.clean",
     "disk",
+    "disk.large_files",
+    "disk.top_dirs",
+    "package.repo",
 }
 
 

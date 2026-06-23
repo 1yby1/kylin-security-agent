@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 from backend.mcp_tools import (
+    disk_top_dirs_tool,
     disk_tool,
+    large_file_tool,
+    package_repo_tool,
     process_kill_tool,
     log_tool,
+    network_config_tool,
+    network_diagnostics_tool,
     network_tool,
     process_tool,
     service_restart_tool,
@@ -90,6 +95,45 @@ def register_builtin_tools(registry: ToolRegistry) -> None:
                 "properties": {
                     "limit": {"type": "integer", "minimum": 1, "maximum": 200},
                     "include_lsof": {"type": "boolean"},
+                },
+            },
+        )
+    )
+    registry.register(
+        ToolDefinition(
+            name="network.diagnostics",
+            title="网络连通性诊断工具",
+            description="对内置白名单目标执行 DNS 解析和 ping 连通性诊断。只读探测，不进行端口扫描。",
+            category="perception",
+            handler=network_diagnostics_tool.run,
+            command_templates=[],
+            input_schema={
+                "type": "object",
+                "required": ["target"],
+                "properties": {
+                    "target": {"type": "string", "enum": sorted(network_diagnostics_tool.ALLOWED_TARGETS)},
+                    "count": {"type": "integer", "minimum": 1, "maximum": 5},
+                    "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 10},
+                    "dns": {"type": "boolean"},
+                    "ping": {"type": "boolean"},
+                },
+            },
+        )
+    )
+    registry.register(
+        ToolDefinition(
+            name="network.config",
+            title="网络配置诊断工具",
+            description="只读采集本机 IP 地址、路由、默认网关和 DNS 配置。",
+            category="perception",
+            handler=network_config_tool.run,
+            command_templates=["network.addr", "network.route"],
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "include_addr": {"type": "boolean"},
+                    "include_route": {"type": "boolean"},
+                    "include_dns": {"type": "boolean"},
                 },
             },
         )
@@ -184,6 +228,61 @@ def register_builtin_tools(registry: ToolRegistry) -> None:
                 "type": "object",
                 "properties": {
                     "path": {"type": "string"},
+                },
+            },
+        )
+    )
+    registry.register(
+        ToolDefinition(
+            name="package.repo",
+            title="软件源诊断工具",
+            description="只读检查 yum/dnf 软件源配置、启用仓库和包管理器可用性。",
+            category="perception",
+            handler=package_repo_tool.run,
+            command_templates=[],
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "repo_dir": {"type": "string"},
+                    "check_repolist": {"type": "boolean"},
+                },
+            },
+        )
+    )
+    registry.register(
+        ToolDefinition(
+            name="disk.large_files",
+            title="大文件定位工具",
+            description="只读扫描指定目录，列出占用空间最大的文件，帮助定位磁盘空间来源。",
+            category="perception",
+            handler=large_file_tool.run,
+            command_templates=[],
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 100},
+                    "min_size_mb": {"type": "integer", "minimum": 0, "maximum": 1048576},
+                    "max_depth": {"type": "integer", "minimum": 0, "maximum": 20},
+                },
+            },
+        )
+    )
+    registry.register(
+        ToolDefinition(
+            name="disk.top_dirs",
+            title="目录空间定位工具",
+            description="只读统计指定目录下子目录占用，定位磁盘空间主要来源。",
+            category="perception",
+            handler=disk_top_dirs_tool.run,
+            command_templates=[],
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 100},
+                    "max_depth": {"type": "integer", "minimum": 0, "maximum": 20},
+                    "include_files": {"type": "boolean"},
                 },
             },
         )
