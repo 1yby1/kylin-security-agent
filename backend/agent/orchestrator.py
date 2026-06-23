@@ -12,7 +12,7 @@ from backend.agent.planner import Plan, Planner
 from backend.audit.logger import AuditLogger
 from backend.config import get_reasoning_settings
 from backend.security.rules import LOW_RISK_TOOLS
-from backend.security.sanitizer import scan_injection
+from backend.security.sanitizer import sanitize_output, scan_injection
 
 
 @dataclass(frozen=True)
@@ -123,7 +123,7 @@ class AgentOrchestrator:
         steps: list[dict[str, Any]] = []
         suggested: list[dict[str, Any]] = []
         last_security: dict[str, Any] = {}
-        message = "Execution completed."
+        message = "执行完成。"
         blocked = False
         current = first_plan
 
@@ -202,7 +202,7 @@ class AgentOrchestrator:
                 parts.append(f"{name}: {value['analysis']}")
             else:
                 parts.append(f"{name}: 已采集")
-        return "; ".join(parts)[:300]
+        return sanitize_output("; ".join(parts), max_len=300)
 
     def evaluate_security(self, query: str, user_id: str, context: dict[str, Any], approved: bool = False, role: str | None = None) -> dict[str, Any]:
         plan = self._planner.plan(query, context, self._executor.tool_manifest())
