@@ -117,6 +117,8 @@ class Planner:
             tools.append("service")
         if self._contains_any(text, ["disk", "space", "df", "磁盘", "空间"]):
             tools.append("disk")
+        if self._contains_any(text, ["登录", "认证", "爆破", "暴力破解", "失败登录", "login", "auth", "brute"]):
+            tools.append("auth")
 
         if not tools:
             tools = ["system", "process"]

@@ -22,6 +22,9 @@ ALLOWED_TOOLS = {
     "service.restart",
     "temp.clean",
     "disk",
+    "auth",
+    "firewall",
+    "privilege",
 }
 
 

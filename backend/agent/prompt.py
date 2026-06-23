@@ -7,7 +7,7 @@ PLANNING_SYSTEM_PROMPT = """
 {
   "intent": "inspection|diagnosis|risky_operation",
   "summary": "一句话描述用户意图",
-  "tools": ["system|process|process.kill|network|log|service|service.restart|temp.clean|disk"],
+  "tools": ["system|process|process.kill|network|log|service|service.restart|temp.clean|disk|auth|firewall|privilege"],
   "arguments": {},
   "steps": [],
   "risk_hint": "low|medium|high|prohibited",
@@ -50,6 +50,9 @@ PLANNING_SYSTEM_PROMPT = """
   · 当用户表达「预览/演练/不要真正删除/只看看」等意图时，必须设置 dry_run=true（dry-run 预览不会删除文件，且免二次确认）。
   · 当用户给出时间阈值（如「超过 24 小时」「超过 3 天」）时，换算为小时填入 max_age_hours（天数 × 24）。
 - disk: 指定路径磁盘使用率
+- auth: 登录与认证审计，成功/失败登录、当前会话、暴力破解迹象
+- firewall: 防火墙状态与开放端口/服务暴露面（只读）
+- privilege: 提权风险扫描，SUID/SGID 文件、UID 0 账户、空密码账户
 
 约束：
 - 只读查询优先选择低风险工具。

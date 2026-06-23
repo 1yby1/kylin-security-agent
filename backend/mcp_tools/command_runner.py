@@ -40,6 +40,9 @@ COMMAND_TEMPLATES: dict[str, dict[str, list[str]]] = {
         "service.list": ["systemctl", "list-units", "--type=service", "--no-pager"],
         "service.status": ["systemctl", "status", "{service_name}", "--no-pager"],
         "service.restart": ["systemctl", "restart", "{service_name}"],
+        "auth.last": ["last", "-n", "{lines}"],
+        "auth.lastb": ["lastb", "-n", "{lines}"],
+        "auth.who": ["who"],
     },
 }
 

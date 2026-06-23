@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from backend.mcp_tools import (
+    auth_tool,
     disk_tool,
     process_kill_tool,
     log_tool,
@@ -185,6 +186,20 @@ def register_builtin_tools(registry: ToolRegistry) -> None:
                 "properties": {
                     "path": {"type": "string"},
                 },
+            },
+        )
+    )
+    registry.register(
+        ToolDefinition(
+            name="auth",
+            title="登录认证审计工具",
+            description="采集近期成功登录、失败登录和当前会话，分析暴力破解与异常登录迹象。",
+            category="security",
+            handler=auth_tool.run,
+            command_templates=["auth.last", "auth.lastb", "auth.who"],
+            input_schema={
+                "type": "object",
+                "properties": {"lines": {"type": "integer", "minimum": 1, "maximum": 200}},
             },
         )
     )
