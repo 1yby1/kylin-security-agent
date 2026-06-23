@@ -45,6 +45,10 @@ COMMAND_TEMPLATES: dict[str, dict[str, list[str]]] = {
         "auth.who": ["who"],
         "firewall.state": ["firewall-cmd", "--state"],
         "firewall.list_all": ["firewall-cmd", "--list-all"],
+        "privilege.suid": ["find", "/usr/bin", "/usr/sbin", "/bin", "/sbin", "/usr/local/bin", "-xdev", "-perm", "-4000", "-type", "f"],
+        "privilege.sgid": ["find", "/usr/bin", "/usr/sbin", "/bin", "/sbin", "/usr/local/bin", "-xdev", "-perm", "-2000", "-type", "f"],
+        "privilege.uid0": ["awk", "-F:", "($3 == 0) {print $1}", "/etc/passwd"],
+        "privilege.empty_password": ["awk", "-F:", "($2 == \"\") {print $1}", "/etc/shadow"],
     },
 }
 

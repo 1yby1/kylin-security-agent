@@ -121,6 +121,8 @@ class Planner:
             tools.append("auth")
         if self._contains_any(text, ["防火墙", "firewall", "暴露", "开放端口", "iptables", "exposure"]):
             tools.append("firewall")
+        if self._contains_any(text, ["提权", "suid", "sgid", "特权", "权限提升", "privilege", "escalation", "空密码"]):
+            tools.append("privilege")
 
         if not tools:
             tools = ["system", "process"]

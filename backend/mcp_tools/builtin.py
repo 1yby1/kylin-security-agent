@@ -4,6 +4,7 @@ from backend.mcp_tools import (
     auth_tool,
     disk_tool,
     firewall_tool,
+    privilege_tool,
     process_kill_tool,
     log_tool,
     network_tool,
@@ -212,6 +213,22 @@ def register_builtin_tools(registry: ToolRegistry) -> None:
             category="security",
             handler=firewall_tool.run,
             command_templates=["firewall.state", "firewall.list_all"],
+            input_schema={"type": "object", "properties": {}},
+        )
+    )
+    registry.register(
+        ToolDefinition(
+            name="privilege",
+            title="提权风险扫描工具",
+            description="扫描特权目录下的 SUID/SGID 文件、UID 0 账户和空密码账户，识别提权风险。",
+            category="security",
+            handler=privilege_tool.run,
+            command_templates=[
+                "privilege.suid",
+                "privilege.sgid",
+                "privilege.uid0",
+                "privilege.empty_password",
+            ],
             input_schema={"type": "object", "properties": {}},
         )
     )
