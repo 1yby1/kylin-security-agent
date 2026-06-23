@@ -13,6 +13,7 @@ createApp({
       query: "查看系统状态、进程和端口情况",
       approved: false,
       token: "",
+      sessionId: localStorage.getItem("ops-agent-session-id") || "",
       chatLoading: false,
       dashboardLoading: false,
       toolsLoading: false,
@@ -94,10 +95,15 @@ createApp({
           body: JSON.stringify({
             query: this.query,
             user_id: "web-user",
+            session_id: this.sessionId || undefined,
             approved: this.approved,
             context: {},
           }),
         });
+        if (this.chatResult.session_id) {
+          this.sessionId = this.chatResult.session_id;
+          localStorage.setItem("ops-agent-session-id", this.sessionId);
+        }
         if (this.chatResult.trace_id) {
           this.auditTraceId = this.chatResult.trace_id;
         }

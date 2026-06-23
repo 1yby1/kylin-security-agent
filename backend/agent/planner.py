@@ -76,9 +76,11 @@ class Planner:
     def plan(self, query: str, context: dict[str, Any] | None = None, tool_manifest: dict[str, Any] | None = None) -> Plan:
         text = query.lower()
         context = context or {}
+        tool_context = self._tool_context(context)
+        conversation_entities = self._conversation_entities(context)
         llm_decision = self._llm_client.analyze(query, context, tool_manifest)
         if llm_decision is not None:
-            base_arguments = {"query": query, **context}
+            base_arguments = {"query": query, **tool_context}
             if llm_decision.steps:
                 steps = [
                     PlanStep(
@@ -123,6 +125,8 @@ class Planner:
             tools.append("system")
         if "process.kill" not in tools and self._contains_any(text, ["process", "pid", "cpu", "memory", "进程", "内存"]):
             tools.append("process")
+        if "process.kill" not in tools and "process" not in tools and self._is_process_followup(text, conversation_entities):
+            tools.append("process")
         if self._is_network_config_request(text):
             tools.append("network.config")
         if self._is_network_diagnostic_request(text) and "network.config" not in tools:
@@ -131,11 +135,15 @@ class Planner:
             tools.append("network")
         if self._contains_any(text, ["log", "error", "exception", "日志", "报错", "异常"]):
             tools.append("log")
+        if "log" not in tools and self._is_service_log_followup(text, conversation_entities):
+            tools.append("log")
         if "service.restart" not in tools and self._contains_any(text, ["service", "systemctl", "status", "服务"]):
+            tools.append("service")
+        if "log" not in tools and "service" not in tools and self._is_service_followup(text, conversation_entities):
             tools.append("service")
         if self._is_package_repo_request(text):
             tools.append("package.repo")
-        if self._is_top_dirs_request(text):
+        if self._is_top_dirs_request(text) or self._is_path_followup(text, conversation_entities):
             tools.append("disk.top_dirs")
         if self._is_large_file_request(text):
             tools.append("disk.large_files")
@@ -145,15 +153,31 @@ class Planner:
         if not tools:
             tools = ["system", "process"]
 
-        arguments = {"query": query, **context}
+        arguments = {"query": query, **tool_context}
         if "service.restart" in tools and "service_name" not in arguments:
             service_name = self._extract_service_name(text)
             if service_name:
                 arguments["service_name"] = service_name
+        if "service.restart" in tools and "service_name" not in arguments:
+            service_name = conversation_entities.get("service_name")
+            if service_name:
+                arguments["service_name"] = str(service_name)
         if "process.kill" in tools and "pid" not in arguments:
             pid = self._extract_pid(text)
             if pid:
                 arguments["pid"] = pid
+        if ("process" in tools or "process.kill" in tools) and "pid" not in arguments:
+            pid = self._extract_conversation_pid(conversation_entities)
+            if pid:
+                arguments["pid"] = pid
+        if "service" in tools and "service_name" not in arguments:
+            service_name = conversation_entities.get("service_name")
+            if service_name:
+                arguments["service_name"] = str(service_name)
+        if "log" in tools and "unit" not in arguments:
+            service_name = conversation_entities.get("service_name")
+            if service_name and self._is_service_log_followup(text, conversation_entities):
+                arguments["unit"] = str(service_name)
         if "temp.clean" in tools and "path" not in arguments:
             temp_path = self._extract_temp_path(text)
             if temp_path:
@@ -165,6 +189,10 @@ class Planner:
         if "network.diagnostics" in tools:
             arguments = self._enrich_arguments(text, "network.diagnostics", arguments)
         if "disk.top_dirs" in tools:
+            if "path" not in arguments:
+                path = conversation_entities.get("path")
+                if path and self._is_path_followup(text, conversation_entities):
+                    arguments["path"] = str(path)
             arguments = self._enrich_arguments(text, "disk.top_dirs", arguments)
         if "package.repo" in tools:
             arguments = self._enrich_arguments(text, "package.repo", arguments)
@@ -192,7 +220,7 @@ class Planner:
             decision = self._llm_client.analyze(query, enriched, tool_manifest)
             if decision is None:
                 return self._rule_next(query, context, prior_results, executed_tools)
-            base_arguments = {"query": query, **context}
+            base_arguments = {"query": query, **self._tool_context(context)}
             if decision.steps:
                 steps = [
                     PlanStep(
@@ -262,6 +290,18 @@ class Planner:
     @staticmethod
     def _contains_any(text: str, words: list[str]) -> bool:
         return any(word in text for word in words)
+
+    @staticmethod
+    def _tool_context(context: dict[str, Any]) -> dict[str, Any]:
+        return {key: value for key, value in context.items() if key != "conversation"}
+
+    @staticmethod
+    def _conversation_entities(context: dict[str, Any]) -> dict[str, Any]:
+        conversation = context.get("conversation")
+        if not isinstance(conversation, dict):
+            return {}
+        entities = conversation.get("last_entities")
+        return entities if isinstance(entities, dict) else {}
 
     @classmethod
     def _is_large_file_request(cls, text: str) -> bool:
@@ -343,6 +383,42 @@ class Planner:
                 "能不能访问",
             ],
         )
+
+    @classmethod
+    def _is_process_followup(cls, text: str, entities: dict[str, Any]) -> bool:
+        return bool(entities.get("pid")) and cls._contains_any(
+            text,
+            ["那个进程", "该进程", "这个进程", "它", "它的进程", "that process", "same process"],
+        )
+
+    @classmethod
+    def _is_service_followup(cls, text: str, entities: dict[str, Any]) -> bool:
+        return bool(entities.get("service_name")) and cls._contains_any(
+            text,
+            ["那个服务", "该服务", "这个服务", "它", "service"],
+        )
+
+    @classmethod
+    def _is_service_log_followup(cls, text: str, entities: dict[str, Any]) -> bool:
+        return bool(entities.get("service_name")) and cls._contains_any(
+            text,
+            ["日志", "log", "它的日志", "服务日志", "继续看"],
+        )
+
+    @classmethod
+    def _is_path_followup(cls, text: str, entities: dict[str, Any]) -> bool:
+        return bool(entities.get("path")) and cls._contains_any(
+            text,
+            ["那个目录", "该目录", "这个目录", "再深一层", "继续看", "它", "path", "directory"],
+        )
+
+    @staticmethod
+    def _extract_conversation_pid(entities: dict[str, Any]) -> int:
+        value = entities.get("pid")
+        if isinstance(value, int) and not isinstance(value, bool):
+            return value
+        text = str(value or "").strip()
+        return int(text) if text.isdigit() else 0
 
     @classmethod
     def _is_package_repo_request(cls, text: str) -> bool:

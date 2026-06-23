@@ -62,6 +62,7 @@ app.mount("/mcp", handle_mcp)
 class AgentRequest(BaseModel):
     query: str = Field(..., min_length=1, description="User operation request")
     user_id: str = Field(default="anonymous")
+    session_id: str | None = Field(default=None, description="Conversation session id for follow-up context")
     context: dict[str, Any] = Field(default_factory=dict)
     approved: bool = Field(default=False, description="Whether the user approved risky actions")
 
@@ -80,6 +81,8 @@ class AgentResponse(BaseModel):
     plan: dict[str, Any] = Field(default_factory=dict)
     steps: list[dict[str, Any]] = Field(default_factory=list)
     suggested_actions: list[dict[str, Any]] = Field(default_factory=list)
+    session_id: str = ""
+    context_summary: str = ""
 
 
 class ToolRequest(BaseModel):
@@ -122,6 +125,7 @@ def execute_agent(request: AgentRequest, authorization: str | None = Header(defa
         context=_strip_client_role(request.context),
         approved=request.approved,
         role=role,
+        session_id=request.session_id,
     )
     return AgentResponse(
         trace_id=run.trace_id,
@@ -137,6 +141,8 @@ def execute_agent(request: AgentRequest, authorization: str | None = Header(defa
         plan=run.plan,
         steps=run.steps,
         suggested_actions=run.suggested_actions,
+        session_id=run.session_id,
+        context_summary=run.context_summary,
     )
 
 
