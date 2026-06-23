@@ -54,6 +54,26 @@ http://localhost:8000
 
 未配置大模型时，系统会自动使用本地关键词规则完成规划。
 
+## 前端访问令牌
+
+HTTP 入口不信任请求体里的 `user_role`，角色由服务端环境变量中的令牌绑定：
+
+```bash
+export AGENT_DEFAULT_ROLE=viewer
+export AGENT_VIEWER_TOKEN=your_viewer_token
+export AGENT_OPERATOR_TOKEN=your_operator_token
+export AGENT_ADMIN_TOKEN=your_admin_token
+```
+
+前端页面右侧的“访问令牌”输入框填写其中一个令牌后，请求会以
+`Authorization: Bearer <token>` 发送。留空或令牌不匹配时默认是 `viewer`，
+只能执行低风险只读操作；执行服务重启、清理临时目录等中风险操作时，需要
+填写 `operator` 或 `admin` 令牌并勾选二次确认。
+
+Linux/systemd 部署时，`deploy/install.sh` 会在首次 root 安装时生成
+`/etc/software-cup-ops/software-cup-ops.env`，`deploy/systemd.service` 会加载
+这个文件。可在服务器上查看该文件，将对应令牌粘贴到前端输入框。
+
 ## 大模型配置
 
 DeepSeek 示例：

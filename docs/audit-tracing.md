@@ -55,6 +55,9 @@ fail-closed (request errors out so an un-audited action is not executed) when
 | `environment_perception` | Tool results used as environment perception context |
 | `tool_call` | Individual tool invocation started or completed, including extracted executed commands on completion |
 | `execution_result` | Overall execution status, extracted executed commands, and raw tool output |
+| `reasoning_step` | Multi-step reasoning loop: each step recorded with tool execution, planning source, and observation results |
+| `injection_scan` | Observed data matched injection signatures; recorded when `status=injection_suspected` with matched patterns and step number; isolation flagged but no blocking |
+| `suggested_action` | Multi-step reasoning loop: diagnostic engine identified operation tools required; recorded as pending confirmation before user approval, with suggested tool and arguments |
 | `final_answer` | Final user-facing conclusion |
 | `trace_complete` | End-of-request summary, including extracted executed commands |
 

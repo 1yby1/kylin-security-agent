@@ -79,6 +79,7 @@ class AgentResponse(BaseModel):
     conclusion: dict[str, Any] = Field(default_factory=dict)
     plan: dict[str, Any] = Field(default_factory=dict)
     steps: list[dict[str, Any]] = Field(default_factory=list)
+    suggested_actions: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class ToolRequest(BaseModel):
@@ -135,6 +136,7 @@ def execute_agent(request: AgentRequest, authorization: str | None = Header(defa
         conclusion=run.conclusion,
         plan=run.plan,
         steps=run.steps,
+        suggested_actions=run.suggested_actions,
     )
 
 
