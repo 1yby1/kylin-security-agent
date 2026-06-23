@@ -7,7 +7,7 @@ PLANNING_SYSTEM_PROMPT = """
 {
   "intent": "inspection|diagnosis|risky_operation",
   "summary": "一句话描述用户意图",
-  "tools": ["system|process|process.kill|network|network.diagnostics|network.config|log|service|service.restart|temp.clean|disk|disk.large_files|disk.top_dirs|package.repo"],
+  "tools": ["system|process|process.kill|network|network.diagnostics|network.config|log|service|service.restart|temp.clean|disk|disk.large_files|disk.top_dirs|package.repo|auth|firewall|privilege"],
   "arguments": {},
   "steps": [],
   "risk_hint": "low|medium|high|prohibited",
@@ -55,6 +55,9 @@ PLANNING_SYSTEM_PROMPT = """
 - disk.large_files: 只读扫描指定目录的大文件，定位“谁占用磁盘空间”，可选 path、limit、min_size_mb、max_depth
 - disk.top_dirs: 只读统计指定目录下子目录占用，定位“哪个目录占空间”，可选 path、limit、max_depth、include_files
 - package.repo: 只读检查 yum/dnf 软件源配置、启用仓库和包管理器可用性
+- auth: 登录与认证审计，成功/失败登录、当前会话、暴力破解迹象
+- firewall: 防火墙状态与开放端口/服务暴露面（只读）
+- privilege: 提权风险扫描，SUID/SGID 文件、UID 0 账户、空密码账户
 
 约束：
 - 只读查询优先选择低风险工具。

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from backend.mcp_tools import (
+    auth_tool,
     disk_top_dirs_tool,
     disk_tool,
+    firewall_tool,
     large_file_tool,
     package_repo_tool,
+    privilege_tool,
     process_kill_tool,
     log_tool,
     network_config_tool,
@@ -252,6 +255,20 @@ def register_builtin_tools(registry: ToolRegistry) -> None:
     )
     registry.register(
         ToolDefinition(
+            name="auth",
+            title="登录认证审计工具",
+            description="采集近期成功登录、失败登录和当前会话，分析暴力破解与异常登录迹象。",
+            category="security",
+            handler=auth_tool.run,
+            command_templates=["auth.last", "auth.lastb", "auth.who"],
+            input_schema={
+                "type": "object",
+                "properties": {"lines": {"type": "integer", "minimum": 1, "maximum": 200}},
+            },
+        )
+    )
+    registry.register(
+        ToolDefinition(
             name="disk.large_files",
             title="大文件定位工具",
             description="只读扫描指定目录，列出占用空间最大的文件，帮助定位磁盘空间来源。",
@@ -271,6 +288,17 @@ def register_builtin_tools(registry: ToolRegistry) -> None:
     )
     registry.register(
         ToolDefinition(
+            name="firewall",
+            title="防火墙暴露面工具",
+            description="只读查看 firewalld 运行状态、默认区域开放端口与服务，识别高危暴露面。",
+            category="security",
+            handler=firewall_tool.run,
+            command_templates=["firewall.state", "firewall.list_all"],
+            input_schema={"type": "object", "properties": {}},
+        )
+    )
+    registry.register(
+        ToolDefinition(
             name="disk.top_dirs",
             title="目录空间定位工具",
             description="只读统计指定目录下子目录占用，定位磁盘空间主要来源。",
@@ -286,5 +314,21 @@ def register_builtin_tools(registry: ToolRegistry) -> None:
                     "include_files": {"type": "boolean"},
                 },
             },
+        )
+    )
+    registry.register(
+        ToolDefinition(
+            name="privilege",
+            title="提权风险扫描工具",
+            description="扫描特权目录下的 SUID/SGID 文件、UID 0 账户和空密码账户，识别提权风险。",
+            category="security",
+            handler=privilege_tool.run,
+            command_templates=[
+                "privilege.suid",
+                "privilege.sgid",
+                "privilege.uid0",
+                "privilege.empty_password",
+            ],
+            input_schema={"type": "object", "properties": {}},
         )
     )

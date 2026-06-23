@@ -16,6 +16,9 @@ LOW_RISK_TOOLS = {
     "disk.top_dirs",
     "network.config",
     "package.repo",
+    "auth",
+    "firewall",
+    "privilege",
 }
 MEDIUM_RISK_TOOLS = {"service.restart", "temp.clean", "process.kill"}
 HIGH_RISK_TOOLS = {"config.modify", "permission.modify", "user.modify", "service.stop"}

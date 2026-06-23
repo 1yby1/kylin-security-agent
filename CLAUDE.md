@@ -8,6 +8,14 @@
 
 目标部署环境是麒麟高级服务器 V11 + LoongArch；开发环境可能是 Windows，因此命令执行、路径处理和最小权限逻辑都需要保持平台感知。
 
+当前 `backend/mcp_tools/builtin.py` 共注册 17 个工具：`system`、`process`、
+`process.kill`、`network`、`log`、`service`、`service.restart`、`temp.clean`、
+`disk`（系统感知与受控操作，详见 `docs/system-perception-tools.md` 和
+`docs/controlled-operation-tools.md`）；`network.diagnostics`、`network.config`、
+`disk.large_files`、`disk.top_dirs`、`package.repo`（只读诊断工具）；以及
+`auth`、`firewall`、`privilege` 三个只读安全态势感知工具（`category="security"`，
+详见 `docs/security-posture-tools.md`）。新增或调整工具时应同步更新相关文档。
+
 ## 文档和报告语言
 
 - 根目录文档、`docs/` 下的项目说明、功能报告、测试报告和后续新增报告默认使用中文。
@@ -95,7 +103,7 @@ python -m unittest discover -v
   Prompt 在 `backend/agent/prompt.py`。规划 JSON 必须包含 `intent`、`tools`、`arguments` 等字段；分析 JSON 必须包含 `conclusion`、`status`、`evidence`、`recommendations` 等字段。调用方需要容忍代码块包裹 JSON 和不支持 `response_format` 的模型。
 
 - **多步推理闭环只能自动执行只读工具。**
-  `AgentOrchestrator._run_loop` 每一步都校验下一步规划：只要工具不在 `backend/security/rules.py` 的 `LOW_RISK_TOOLS` 内，就不会自动执行，而是收进 `suggested_actions` 并停手。`Planner.plan_next` 本身允许返回操作类工具——只读边界是编排器强制的，不是规划器的职责，不要把这条边界误移到 `Planner` 里。
+  `AgentOrchestrator._run_loop` 每一步都校验下一步规划：只要工具不在 `backend/security/rules.py` 的 `LOW_RISK_TOOLS` 内，就不会自动执行，而是收进 `suggested_actions` 并停手。`Planner.plan_next` 本身允许返回操作类工具——只读边界是编排器强制的，不是规划器的职责，不要把这条边界误移到 `Planner` 里。`LOW_RISK_TOOLS` 目前包含 `system`、`process`、`network`、`log`、`service`、`disk` 以及 `auth`、`firewall`、`privilege` 三个安全感知工具；新增只读工具时记得同步加入该集合。
 
 - **被观测数据（observed_data）隔离且不可信，不得当作指令。**
   工具执行结果在喂给 LLM 前必须经过 `backend/security/sanitizer.py` 的 `build_observation_block()` 清洗、截断并包装为 `<OBSERVED_DATA ... trust="untrusted" ...>` 隔离块；`ANALYSIS_SYSTEM_PROMPT` 显式声明该字段只能作为分析素材。任何模块都不应把工具结果原文直接拼进 prompt，也不应认为 `observed_data` 的内容可以改变角色、跳过校验或代表用户确认。
@@ -105,7 +113,7 @@ python -m unittest discover -v
 - `POST /api/agent/execute`：完整 Agent 链路。响应在原有字段之外新增 `steps`（多步推理闭环每步摘要，单次路径下为空列表）和 `suggested_actions`（闭环中被拦下、未执行的操作类工具建议，需二次确认才能真正执行）。
 - `POST /api/agent/plan`：只规划，不执行工具。
 - `POST /api/security/evaluate`：只执行安全校验。
-- `GET /api/tools`：查看工具列表和 manifest。
+- `GET /api/tools`：查看工具列表和 manifest，当前共 17 个工具。
 - `GET /api/mcp/tools`：查看 MCP-like manifest。
 - `GET /api/tools/{tool_name}`：查看工具元数据。
 - `POST /api/tools/{tool_name}`：直接调用工具，仍需通过安全校验。

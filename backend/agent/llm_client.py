@@ -27,6 +27,9 @@ ALLOWED_TOOLS = {
     "disk.large_files",
     "disk.top_dirs",
     "package.repo",
+    "auth",
+    "firewall",
+    "privilege",
 }
 
 

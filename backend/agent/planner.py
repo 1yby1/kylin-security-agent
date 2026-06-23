@@ -149,6 +149,12 @@ class Planner:
             tools.append("disk.large_files")
         if self._contains_any(text, ["disk", "space", "df", "磁盘", "空间"]):
             tools.append("disk")
+        if self._contains_any(text, ["登录", "认证", "爆破", "暴力破解", "失败登录", "login", "auth", "brute"]):
+            tools.append("auth")
+        if self._contains_any(text, ["防火墙", "firewall", "暴露", "开放端口", "iptables", "exposure"]):
+            tools.append("firewall")
+        if self._contains_any(text, ["提权", "suid", "sgid", "特权", "权限提升", "privilege", "escalation", "空密码"]):
+            tools.append("privilege")
 
         if not tools:
             tools = ["system", "process"]
