@@ -110,3 +110,16 @@ def get_audit_settings() -> AuditSettings:
     fail_closed = os.getenv("AGENT_AUDIT_FAIL_CLOSED", "false").strip().lower() in {"1", "true", "yes"}
     return AuditSettings(db_path=db_path, fail_closed=fail_closed)
 
+
+@dataclass(frozen=True)
+class ReasoningSettings:
+    max_steps: int
+
+
+def get_reasoning_settings() -> ReasoningSettings:
+    raw = os.getenv("AGENT_MAX_REASONING_STEPS", "3")
+    try:
+        steps = int(raw)
+    except ValueError:
+        steps = 3
+    return ReasoningSettings(max_steps=max(1, min(steps, 10)))
