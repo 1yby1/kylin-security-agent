@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from backend.agent.llm_client import LLMClient
+from backend.security.sanitizer import build_observation_block
 
 
 @dataclass(frozen=True)
@@ -86,6 +87,61 @@ class Planner:
             summary="本地规则识别的运维请求",
             source="rules",
             reasoning=["LLM 未启用或返回不可用，使用本地关键词规则选择工具。"],
+        )
+
+    def plan_next(
+        self,
+        query: str,
+        context: dict[str, Any],
+        prior_results: dict[str, Any],
+        executed_tools: set[str],
+        tool_manifest: dict[str, Any] | None = None,
+    ) -> Plan | None:
+        if self._llm_client.enabled:
+            observation = build_observation_block(prior_results)
+            enriched = {**context, "observations": observation, "already_executed": sorted(executed_tools)}
+            decision = self._llm_client.analyze(query, enriched, tool_manifest)
+            if decision is None:
+                return self._rule_next(query, context, prior_results, executed_tools)
+            new_tools = [tool for tool in decision.tools if tool not in executed_tools]
+            if not new_tools:
+                return None
+            return Plan(
+                intent=decision.intent,
+                tools=list(dict.fromkeys(new_tools)),
+                arguments={"query": query, **context, **decision.arguments},
+                summary=decision.summary or "闭环下一步",
+                source="llm",
+                reasoning=decision.reasoning or [],
+            )
+        return self._rule_next(query, context, prior_results, executed_tools)
+
+    @staticmethod
+    def _rule_next(
+        query: str,
+        context: dict[str, Any],
+        prior_results: dict[str, Any],
+        executed_tools: set[str],
+    ) -> Plan | None:
+        service_output = prior_results.get("service")
+        if not isinstance(service_output, dict) or "log" in executed_tools:
+            return None
+        analysis = service_output.get("analysis", {})
+        if not isinstance(analysis, dict):
+            return None
+        if analysis.get("failed_count", 0) <= 0 and analysis.get("inactive_count", 0) <= 0:
+            return None
+        arguments: dict[str, Any] = {"query": query, **context}
+        service_name = context.get("service_name")
+        if service_name:
+            arguments["unit"] = service_name
+        return Plan(
+            intent="diagnosis",
+            tools=["log"],
+            arguments=arguments,
+            summary="检测到服务异常，自动拉取日志",
+            source="rules",
+            reasoning=["service 工具发现 failed/inactive 服务，升级到 log 工具。"],
         )
 
     @property
