@@ -60,6 +60,15 @@ createApp({
     format(value) {
       return JSON.stringify(value ?? {}, null, 2);
     },
+    stepArgs(args) {
+      const hidden = new Set(["query", "user_id", "user_role", "approved"]);
+      const result = {};
+      for (const [key, value] of Object.entries(args || {})) {
+        if (hidden.has(key)) continue;
+        result[key] = typeof value === "object" ? JSON.stringify(value) : value;
+      }
+      return result;
+    },
     stageStatusClass(status) {
       if (!status) return "unknown";
       const value = String(status).toLowerCase();

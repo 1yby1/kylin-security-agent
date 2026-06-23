@@ -8,6 +8,21 @@ from backend.agent.llm_client import LLMClient
 
 
 @dataclass(frozen=True)
+class PlanStep:
+    """A single ordered step in a tool-orchestration chain.
+
+    Each step carries its own ``tool`` and ``arguments`` so a plan can chain
+    several tools, each with distinct parameters. Argument values may contain
+    ``${stepId.path}`` references that are resolved against earlier steps'
+    outputs just before the step is security-checked and executed.
+    """
+
+    id: str
+    tool: str
+    arguments: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class Plan:
     intent: str
     tools: list[str]
@@ -15,6 +30,22 @@ class Plan:
     summary: str = ""
     source: str = "rules"
     reasoning: list[str] = field(default_factory=list)
+    steps: list[PlanStep] = field(default_factory=list)
+
+    def execution_steps(self) -> list[PlanStep]:
+        """Return the ordered steps to execute.
+
+        When an explicit ``steps`` orchestration is present it is used as-is.
+        Otherwise one step per tool is derived, each sharing the plan-level
+        ``arguments``. This preserves the original single-arguments behaviour
+        for legacy plans that only carry ``tools`` + ``arguments``.
+        """
+        if self.steps:
+            return self.steps
+        return [
+            PlanStep(id=f"s{index + 1}", tool=tool, arguments=dict(self.arguments))
+            for index, tool in enumerate(self.tools)
+        ]
 
 
 class Planner:
@@ -32,10 +63,29 @@ class Planner:
         context = context or {}
         llm_decision = self._llm_client.analyze(query, context, tool_manifest)
         if llm_decision is not None:
+            base_arguments = {"query": query, **context}
+            if llm_decision.steps:
+                steps = [
+                    PlanStep(
+                        id=step["id"],
+                        tool=step["tool"],
+                        arguments={**base_arguments, **step.get("arguments", {})},
+                    )
+                    for step in llm_decision.steps
+                ]
+                return Plan(
+                    intent=llm_decision.intent,
+                    tools=list(dict.fromkeys(step.tool for step in steps)),
+                    arguments=base_arguments,
+                    summary=llm_decision.summary,
+                    source="llm",
+                    reasoning=llm_decision.reasoning or [],
+                    steps=steps,
+                )
             return Plan(
                 intent=llm_decision.intent,
                 tools=list(dict.fromkeys(llm_decision.tools)),
-                arguments={"query": query, **context, **llm_decision.arguments},
+                arguments={**base_arguments, **llm_decision.arguments},
                 summary=llm_decision.summary,
                 source="llm",
                 reasoning=llm_decision.reasoning or [],

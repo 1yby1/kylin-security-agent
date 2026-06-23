@@ -137,6 +137,39 @@
             </article>
           </section>
 
+          <article class="panel" v-if="chatResult.steps?.length">
+            <header class="panel-header">
+              <h2>编排链路</h2>
+              <span class="eyebrow">Orchestration · {{ chatResult.steps.length }} 步</span>
+            </header>
+            <ol class="step-chain">
+              <li
+                v-for="step in chatResult.steps"
+                :key="step.id"
+                class="step-item"
+                :class="`is-${stageStatusClass(step.status)}`"
+              >
+                <div class="step-head">
+                  <span class="step-id">{{ step.id }}</span>
+                  <span class="step-tool">{{ step.tool }}</span>
+                  <span class="pill" :class="`is-${stageStatusClass(step.status)}`">{{ step.status }}</span>
+                </div>
+                <dl class="kv" v-if="Object.keys(stepArgs(step.arguments)).length">
+                  <template v-for="(value, key) in stepArgs(step.arguments)" :key="key">
+                    <dt>{{ key }}</dt>
+                    <dd>{{ value }}</dd>
+                  </template>
+                </dl>
+                <ul class="step-commands" v-if="step.executed_commands?.length">
+                  <li v-for="(cmd, idx) in step.executed_commands" :key="idx">
+                    <code>{{ cmd.command }}</code>
+                    <span class="muted">exit {{ cmd.exit_code }}</span>
+                  </li>
+                </ul>
+              </li>
+            </ol>
+          </article>
+
           <article class="panel" v-if="chatResult.trace_id || chatResult.error">
             <header class="panel-header">
               <h2>最终结论</h2>

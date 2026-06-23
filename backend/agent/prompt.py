@@ -9,9 +9,33 @@ PLANNING_SYSTEM_PROMPT = """
   "summary": "一句话描述用户意图",
   "tools": ["system|process|process.kill|network|log|service|service.restart|temp.clean|disk"],
   "arguments": {},
+  "steps": [],
   "risk_hint": "low|medium|high|prohibited",
   "need_confirmation": false,
   "reasoning": ["简短说明为什么选择这些工具"]
+}
+
+工具编排（多步链路）：
+- 当一个请求需要多个工具按顺序协作，或后一个工具需要前一个工具的输出时，使用可选的 steps 数组。
+- 每个 step 形如 {"id": "s1", "tool": "process", "arguments": {"limit": 5}}；id 必须唯一，tool 必须是上面的注册工具。
+- steps 按数组顺序串行执行；任意一步被安全校验拦截或执行失败时，整条链路立即中断。
+- 后一步可以用占位符引用前一步的输出：值写成 "${stepId.path}"，path 按工具结果结构逐层取值，支持点号和列表下标，例如 "${s1.analysis.top_cpu[0].pid}"。
+- 占位符必须是整个参数值（不能与其他文字拼接）；解析后的真实值会先经过安全校验再执行。若目标工具参数 schema 要求整数而引用解析出的是纯数字字符串（如 "4321"），后端会按 schema 自动转换为整数；非数字字符串仍会被 schema 校验拦截。
+- 不需要多步协作时省略 steps，只用 tools + arguments；两种写法都合法。
+
+示例（先查进程，再终止其中 CPU 最高的进程）：
+{
+  "intent": "risky_operation",
+  "summary": "终止 CPU 占用最高的非系统进程",
+  "tools": ["process", "process.kill"],
+  "arguments": {},
+  "steps": [
+    {"id": "s1", "tool": "process", "arguments": {"limit": 5}},
+    {"id": "s2", "tool": "process.kill", "arguments": {"pid": "${s1.analysis.top_cpu[0].pid}"}}
+  ],
+  "risk_hint": "medium",
+  "need_confirmation": true,
+  "reasoning": ["先采集进程占用，再按结果终止目标进程"]
 }
 
 工具说明：

@@ -78,6 +78,7 @@ class AgentResponse(BaseModel):
     executed_commands: list[dict[str, Any]] = Field(default_factory=list)
     conclusion: dict[str, Any] = Field(default_factory=dict)
     plan: dict[str, Any] = Field(default_factory=dict)
+    steps: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class ToolRequest(BaseModel):
@@ -133,6 +134,7 @@ def execute_agent(request: AgentRequest, authorization: str | None = Header(defa
         executed_commands=run.executed_commands,
         conclusion=run.conclusion,
         plan=run.plan,
+        steps=run.steps,
     )
 
 
@@ -191,6 +193,10 @@ def plan_agent(request: AgentRequest) -> dict[str, Any]:
         "summary": plan.summary,
         "source": plan.source,
         "reasoning": plan.reasoning,
+        "steps": [
+            {"id": step.id, "tool": step.tool, "arguments": step.arguments}
+            for step in plan.execution_steps()
+        ],
     }
     audit.event(
         trace_id=trace_id,
@@ -308,16 +314,9 @@ def audit_recent(
     user_id: str | None = None,
     status: str | None = None,
 ) -> dict[str, Any]:
-    if user_id or status:
-        records = audit.export(limit=limit, trace_id=trace_id)
-        records = [
-            record
-            for record in records
-            if (not user_id or record.get("user_id") == user_id)
-            and (not status or record.get("status") == status)
-        ]
-        return {"records": records}
-    return {"records": audit.read_recent(limit=limit, trace_id=trace_id)}
+    return {
+        "records": audit.read_recent(limit=limit, trace_id=trace_id, user_id=user_id, status=status)
+    }
 
 
 @app.get("/api/audit/verify")

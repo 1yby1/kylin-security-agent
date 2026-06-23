@@ -58,6 +58,11 @@ fail-closed (request errors out so an un-audited action is not executed) when
 | `final_answer` | Final user-facing conclusion |
 | `trace_complete` | End-of-request summary, including extracted executed commands |
 
+For multi-step orchestration, `security_validation` and `tool_call` events are
+emitted once per step and carry a `step_id` in their event data, so the full
+chain (which step was checked, ran, or was blocked) can be reconstructed from a
+single `trace_id`.
+
 ## Event Shape
 
 ```json

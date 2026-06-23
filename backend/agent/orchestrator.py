@@ -23,6 +23,7 @@ class AgentRunResult:
     executed_commands: list[dict[str, Any]]
     conclusion: dict[str, Any]
     plan: dict[str, Any]
+    steps: list[dict[str, Any]]
 
 
 class AgentOrchestrator:
@@ -80,6 +81,7 @@ class AgentOrchestrator:
                 "tools": plan.tools,
                 "executed_commands": execution.executed_commands,
                 "result": execution.result,
+                "steps": execution.steps,
             },
         )
         self._audit.event(
@@ -129,6 +131,7 @@ class AgentOrchestrator:
             executed_commands=execution.executed_commands,
             conclusion=conclusion,
             plan=plan_data,
+            steps=execution.steps,
         )
 
     def evaluate_security(self, query: str, user_id: str, context: dict[str, Any], approved: bool = False, role: str | None = None) -> dict[str, Any]:
@@ -198,6 +201,10 @@ class AgentOrchestrator:
             "summary": plan.summary,
             "source": plan.source,
             "reasoning": plan.reasoning,
+            "steps": [
+                {"id": step.id, "tool": step.tool, "arguments": step.arguments}
+                for step in plan.execution_steps()
+            ],
         }
 
     @staticmethod

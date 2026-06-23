@@ -26,6 +26,19 @@
 8. `backend.agent.llm_client.LLMClient.conclude()` 或本地兜底逻辑生成结构化结论。
 9. `backend.audit.logger.AuditLogger`（薄门面）委托进程内共享的 `backend.audit.store.AuditStore` 写入 SQLite 审计事件。
 
+## 工具编排（多步链路）
+
+规划结果可以是单工具，也可以是按顺序协作的多工具链路（Tool Orchestration）。`Plan` 携带可选的 `steps`（`backend/agent/planner.py::PlanStep`）；缺省时 `Plan.execution_steps()` 会按 `tools` 顺序派生「每个工具一个步骤、共享 `arguments`」，因此旧链路完全兼容。
+
+`ToolExecutor.execute()` 逐步执行：
+
+1. **解析引用**：步骤参数里形如 `"${stepId.path}"` 的占位符，按先前步骤输出逐层取值（支持点号与列表下标），解析出真实值。
+2. **逐步安全校验**：对当前步骤（单工具 + 解析后参数）单独调用 `SecurityGuard.check()`。占位符必须先解析成真实值，否则会被参数字符集校验拦截，从而保证「安全校验早于每次执行」对每个步骤都成立。
+3. **执行并存储输出**：执行工具，把结果存入 `outputs[step.id]` 供后续步骤引用。
+4. **快速失败**：任意一步被拦截或解析失败，整条链路立即中断，后续步骤不再执行；已执行步骤的输出仍保留在 `result` 中。
+
+`ExecutionResult.security` 是各步骤校验的聚合（`risk_level` 取最大值，`reasons`/`checks` 汇总，`blocked_step` 标记首个被拦截步骤，`steps` 给出逐步摘要）。完整契约与引用语法见 `docs/llm-agent-json-contract.md`。
+
 ## LLM 环境变量
 
 DeepSeek 示例：
@@ -115,12 +128,14 @@ export AGENT_STRICT_LEAST_PRIVILEGE=true
   "summary": "一句话描述用户意图",
   "tools": ["工具名称"],
   "arguments": {},
-  "arguments_by_tool": {},
+  "steps": [],
   "risk_hint": "low|medium|high|prohibited",
   "need_confirmation": false,
   "reasoning": ["简短规划理由"]
 }
 ```
+
+可选的 `steps` 用于多工具编排：每个 step 形如 `{"id": "s1", "tool": "process", "arguments": {...}}`，后一步参数可用 `"${stepId.path}"` 引用前一步输出。省略 `steps` 时按 `tools` 顺序逐个执行。详见 `docs/llm-agent-json-contract.md`。
 
 分析阶段固定返回：
 
@@ -155,9 +170,12 @@ export AGENT_STRICT_LEAST_PRIVILEGE=true
 - `final_answer`
 - `trace_complete`
 
+多步编排时，`security_validation` 与 `tool_call` 事件会按步骤多次出现，事件数据携带 `step_id` 以还原完整链路。
+
 ## 关键约束
 
-- 工具执行顺序必须保持为：规划 -> 安全校验 -> 工具执行 -> 结果总结 -> 审计闭环。
+- 工具执行顺序必须保持为：规划 -> 安全校验 -> 工具执行 -> 结果总结 -> 审计闭环。多步编排时，安全校验与工具执行按步骤交替，但「每一步执行前都必须先通过该步安全校验」的约束不变。
+- 步骤间数据引用必须在该步安全校验**之前**解析为真实值；不得让未解析的占位符进入工具执行。
 - 所有 shell 访问必须走 `run_template()` 或 `run_optional_template()`。
 - Windows 和 Linux 命令模板不同，新增工具时需要保留平台判断。
 - 中风险工具必须要求 operator/admin 角色和二次确认。
