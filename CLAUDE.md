@@ -120,6 +120,9 @@ python -m unittest discover -v
 - **限流/并发闸是 `SecurityGuard` 之外的额外一道闸，不替代安全校验。**
   `backend/main.py` 的 `rate_limit_middleware` 在重端点（`POST /api/agent/execute`、`/api/agent/plan`、`/api/security/evaluate`、`/api/tools/{tool_name}`）前用 `backend/security/rate_limit.py` 的 `RateLimiter`（按主体/匿名 IP 滑动窗口，`max_keys` 防内存膨胀）和 `ConcurrencyGate`（非阻塞并发上限）做频率/并发预算判断，超限返回 `429`/`503`。它只做"是否超预算"判断，不做工具白名单、参数、危险路径/命令、角色或二次确认校验；即使关闭限流（`AGENT_RATE_LIMIT_ENABLED=false`），`backend/security/guard.py` 的全部校验依然在工具执行前生效。`backend/observability/metrics.py` 的 `MetricsCollector` 只读采集请求/限流/拦截计数、工具耗时分位数和 LLM 成功率，进程内内存态、重启即清零，不影响业务结果。详见 `docs/self-protection-observability.md`。
 
+- **主动巡检只跑只读工具、经 executor、不自动修复、默认关。**
+  除被动 `POST /api/agent/execute` 链路外，`backend/monitor/scheduler.py` 的 `MonitorScheduler` 是一个**可选**的后台守护线程：`AGENT_MONITOR_ENABLED=true` 时在 lifespan 启动，按 `AGENT_MONITOR_INTERVAL_SECONDS` 周期对固定只读工具（`disk`/`service`/`auth`，`CHECK_TOOLS`）经 `ToolExecutor.execute(..., user_id="monitor", role="admin")` 采样（复用 guard + metrics，不直调 registry），用 `backend/monitor/checks.py` 的阈值规则判定，命中即写 `AlertStore`（内存态、上限+TTL、重启清零）并落 `monitor_alert` 审计。巡检**绝不触发操作类工具或自动修复**；`get_monitor_settings()` 强制 `auth_lines >= failed_login + 1`（否则失败登录告警永不触发）；tick 异常隔离、lifespan `finally` 优雅停。默认关闭，对现有行为零侵入。详见 `docs/proactive-monitoring.md`。
+
 ## API 表面
 
 - `POST /api/agent/execute`：完整 Agent 链路。响应在原有字段之外新增 `steps`（多步推理闭环每步摘要，单次路径下为空列表）和 `suggested_actions`（闭环中被拦下、未执行的操作类工具建议，需二次确认才能真正执行）。
@@ -134,6 +137,8 @@ python -m unittest discover -v
 - `GET /api/security/runtime`：查看运行身份和最小权限状态。
 - `GET /api/audit/recent?limit=&trace_id=`：查询审计事件。
 - `GET /api/metrics`：查看进程内指标快照（请求数、限流/拦截计数、工具耗时 P50/P95、LLM 成功率），仅 operator/admin 可访问，viewer 返回 403。详见 `docs/self-protection-observability.md`。
+- `GET /api/alerts?limit=`：查看后台主动巡检产生的告警（内存态、重启清零），仅 operator/admin 可访问，否则返回 403。详见 `docs/proactive-monitoring.md`。
+- `GET /api/monitor/status`：查看巡检状态（`enabled`/`running`/`interval_seconds`/`last_run_at`/`last_alert_count`/`checks`），开放访问、仅良性元数据。详见 `docs/proactive-monitoring.md`。
 
 `POST /api/agent/execute`、`/api/agent/plan`、`/api/security/evaluate` 以及 `POST /api/tools/{tool_name}` 这几个重端点带限流（按主体/匿名 IP 滑动窗口）和并发闸保护，超限返回 `429`（带 `Retry-After`）或 `503`；详见 `docs/self-protection-observability.md`。
 
