@@ -121,6 +121,8 @@ class SecurityGuard:
 
         policy = RISK_POLICIES[risk_level]
         confirmation_required = policy.confirmation_required
+        if confirmation_required and self._confirmation_waived_by_preview(tools, arguments):
+            confirmation_required = False
         confirmation_ok = not confirmation_required or approved
         checks.append(
             SecurityCheck(
@@ -324,6 +326,25 @@ class SecurityGuard:
                 risk_level = self._max_risk(risk_level, "high")
 
         return risk_level
+
+    def _confirmation_waived_by_preview(self, tools: list[str], arguments: dict[str, Any]) -> bool:
+        """A dry-run ``temp.clean`` preview over a safe temp dir has no side
+        effects, so it does not require secondary confirmation.
+
+        Risk stays ``medium`` (the operator/admin role requirement still
+        applies); only the confirmation gate is waived. The waiver requires
+        ``dry_run`` to be exactly ``True`` and a safe path — and refuses if any
+        other controlled operation is bundled in. The executor passes these very
+        arguments (with ``dry_run=True``) to the tool, which independently honors
+        ``dry_run``, so no deletion can occur. This makes the no-side-effect
+        invariant explicit rather than relying on the tool alone.
+        """
+        if "temp.clean" not in tools:
+            return False
+        if any(tool != "temp.clean" and (tool in MEDIUM_RISK_TOOLS or tool in HIGH_RISK_TOOLS) for tool in tools):
+            return False
+        path = arguments.get("path")
+        return arguments.get("dry_run") is True and isinstance(path, str) and self.is_safe_temp_path(path)
 
     def _check_permission(self, role: str, risk_level: str) -> tuple[bool, str]:
         role = (role or "viewer").lower()

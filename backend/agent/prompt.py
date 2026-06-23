@@ -47,6 +47,8 @@ PLANNING_SYSTEM_PROMPT = """
 - service: 服务列表或服务状态查询
 - service.restart: 重启指定白名单 systemd 服务，必须提供 service_name
 - temp.clean: 清理指定安全临时目录，必须提供 path，可选 max_age_hours、limit、dry_run
+  · 当用户表达「预览/演练/不要真正删除/只看看」等意图时，必须设置 dry_run=true（dry-run 预览不会删除文件，且免二次确认）。
+  · 当用户给出时间阈值（如「超过 24 小时」「超过 3 天」）时，换算为小时填入 max_age_hours（天数 × 24）。
 - disk: 指定路径磁盘使用率
 
 约束：

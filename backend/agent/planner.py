@@ -70,7 +70,9 @@ class Planner:
                     PlanStep(
                         id=step["id"],
                         tool=step["tool"],
-                        arguments={**base_arguments, **step.get("arguments", {})},
+                        arguments=self._enrich_arguments(
+                            text, step["tool"], {**base_arguments, **step.get("arguments", {})}
+                        ),
                     )
                     for step in llm_decision.steps
                 ]
@@ -83,10 +85,13 @@ class Planner:
                     reasoning=llm_decision.reasoning or [],
                     steps=steps,
                 )
+            arguments = {**base_arguments, **llm_decision.arguments}
+            for tool in llm_decision.tools:
+                arguments = self._enrich_arguments(text, tool, arguments)
             return Plan(
                 intent=llm_decision.intent,
                 tools=list(dict.fromkeys(llm_decision.tools)),
-                arguments={**base_arguments, **llm_decision.arguments},
+                arguments=arguments,
                 summary=llm_decision.summary,
                 source="llm",
                 reasoning=llm_decision.reasoning or [],
@@ -129,6 +134,8 @@ class Planner:
             temp_path = self._extract_temp_path(text)
             if temp_path:
                 arguments["path"] = temp_path
+        if "temp.clean" in tools:
+            arguments = self._enrich_arguments(text, "temp.clean", arguments)
 
         return Plan(
             intent=self._infer_intent(text),
@@ -260,3 +267,73 @@ class Planner:
             if path in text:
                 return path
         return ""
+
+    @classmethod
+    def _enrich_arguments(cls, text: str, tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Fill ``temp.clean`` arguments the planner can read from explicit text.
+
+        This is fill-if-missing only: it never overrides a value the LLM already
+        produced. ``path`` and ``max_age_hours`` are taken from what the user
+        literally wrote (e.g. ``/tmp``, ``超过 24 小时``); ``dry_run`` is set true
+        only when the request explicitly asks for a preview / no-delete. Because
+        it only fills gaps with the user's own stated values (and only ever sets
+        the safe ``dry_run=true`` direction), it honors user intent rather than
+        rewriting the model's decision — which matters because the LLM often
+        drops the required ``path``.
+        """
+        if tool != "temp.clean":
+            return arguments
+        enriched = dict(arguments)
+        if "path" not in enriched:
+            temp_path = cls._extract_temp_path(text)
+            if temp_path:
+                enriched["path"] = temp_path
+        if "max_age_hours" not in enriched:
+            hours = cls._extract_max_age_hours(text)
+            if hours:
+                enriched["max_age_hours"] = hours
+        if "dry_run" not in enriched and cls._is_temp_clean_preview(text):
+            enriched["dry_run"] = True
+        return enriched
+
+    @staticmethod
+    def _is_temp_clean_preview(text: str) -> bool:
+        preview_markers = [
+            "dry_run",
+            "dry-run",
+            "dry run",
+            "preview",
+            "预览",
+            "预演",
+            "模拟",
+            "试运行",
+            "只查看",
+            "仅查看",
+            "不要真正删除",
+            "不真正删除",
+            "不要删除",
+            "不删除",
+            "不实际删除",
+        ]
+        return any(marker in text for marker in preview_markers)
+
+    @staticmethod
+    def _extract_max_age_hours(text: str) -> int:
+        hour_patterns = [
+            r"(?:超过|大于|older\s+than|over|超过了)\s*(\d{1,4})\s*(?:小时|hour|hours|h)",
+            r"(\d{1,4})\s*(?:小时|hour|hours|h)\s*(?:以上|前|以前|old)?",
+            r"max_age_hours\s*[:=]?\s*(\d{1,4})",
+        ]
+        for pattern in hour_patterns:
+            match = re.search(pattern, text, flags=re.IGNORECASE)
+            if match:
+                return max(1, min(int(match.group(1)), 720))
+        day_patterns = [
+            r"(?:超过|大于|older\s+than|over)\s*(\d{1,3})\s*(?:天|day|days|d)",
+            r"(\d{1,3})\s*(?:天|day|days|d)\s*(?:以上|前|以前|old)?",
+        ]
+        for pattern in day_patterns:
+            match = re.search(pattern, text, flags=re.IGNORECASE)
+            if match:
+                return max(1, min(int(match.group(1)) * 24, 720))
+        return 0

@@ -183,9 +183,18 @@
                 <span class="muted">{{ chatResult.conclusion.source || "—" }}</span>
               </div>
               <p class="conclusion-text">{{ chatResult.conclusion.conclusion }}</p>
-              <ul v-if="chatResult.conclusion.recommendations?.length">
-                <li v-for="item in chatResult.conclusion.recommendations" :key="item">{{ item }}</li>
-              </ul>
+              <template v-if="chatResult.conclusion.evidence?.length">
+                <p class="field-label">{{ chatResult.blocked ? "拦截原因" : "关键证据" }}</p>
+                <ul>
+                  <li v-for="item in chatResult.conclusion.evidence" :key="item">{{ item }}</li>
+                </ul>
+              </template>
+              <template v-if="chatResult.conclusion.recommendations?.length">
+                <p class="field-label">建议</p>
+                <ul>
+                  <li v-for="item in chatResult.conclusion.recommendations" :key="item">{{ item }}</li>
+                </ul>
+              </template>
             </div>
             <pre>{{ format(chatResult) }}</pre>
           </article>

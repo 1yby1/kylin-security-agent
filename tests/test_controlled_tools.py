@@ -6,9 +6,36 @@ import unittest
 
 from backend.agent.executor import ToolExecutor
 from backend.agent.orchestrator import AgentOrchestrator
-from backend.agent.planner import Plan
+from backend.agent.planner import Plan, Planner
 from backend.audit.logger import AuditLogger
 from backend.mcp_tools.registry import ToolDefinition, ToolRegistry
+
+
+class TempCleanEnrichmentTests(unittest.TestCase):
+    """temp.clean argument enrichment is fill-if-missing from explicit text.
+
+    The LLM often selects temp.clean but drops the required ``path`` (and
+    omits dry_run), so the planner fills these from what the user literally
+    wrote — without ever overriding values the LLM did provide.
+    """
+
+    def test_fills_path_age_and_dry_run_from_text(self) -> None:
+        text = "预览清理 /tmp 下超过 24 小时的临时文件，不要真正删除".lower()
+        args = Planner._enrich_arguments(text, "temp.clean", {})
+        self.assertEqual(args["path"], "/tmp")
+        self.assertEqual(args["max_age_hours"], 24)
+        self.assertTrue(args["dry_run"])
+
+    def test_converts_days_to_hours(self) -> None:
+        text = "清理 /var/tmp 下超过 3 天的文件".lower()
+        args = Planner._enrich_arguments(text, "temp.clean", {})
+        self.assertEqual(args["max_age_hours"], 72)
+
+    def test_never_overrides_existing_values(self) -> None:
+        text = "预览清理 /tmp 下超过 24 小时的临时文件，不要真正删除".lower()
+        args = Planner._enrich_arguments(text, "temp.clean", {"path": "/var/tmp", "dry_run": False})
+        self.assertEqual(args["path"], "/var/tmp")
+        self.assertFalse(args["dry_run"])
 
 
 class ControlledToolSecurityTests(unittest.TestCase):
@@ -81,6 +108,32 @@ class ControlledToolSecurityTests(unittest.TestCase):
         self.assertEqual(allowed["security"]["risk_level"], "medium")
 
     def test_temp_clean_security_cases(self) -> None:
+        preview = self.evaluate(
+            "预览清理 /tmp 下超过 24 小时的临时文件，不要真正删除",
+            {},
+            approved=False,
+            user_id="operator1",
+        )
+        self.assertEqual(preview["plan"]["tools"], ["temp.clean"])
+        self.assertEqual(preview["plan"]["arguments"]["path"], "/tmp")
+        self.assertEqual(preview["plan"]["arguments"]["max_age_hours"], 24)
+        self.assertTrue(preview["plan"]["arguments"]["dry_run"])
+        # Option A: a safe dry-run preview stays medium risk (so operator/admin
+        # role is still required) but waives secondary confirmation.
+        self.assertFalse(preview["security"]["blocked"])
+        self.assertEqual(preview["security"]["risk_level"], "medium")
+        self.assertFalse(preview["security"]["confirmation_required"])
+
+        preview_viewer = self.evaluate(
+            "预览清理 /tmp 下超过 24 小时的临时文件，不要真正删除",
+            {},
+            approved=False,
+            user_id="viewer1",
+        )
+        # viewer is still blocked by the medium-risk role requirement.
+        self.assertTrue(preview_viewer["security"]["blocked"])
+        self.assertEqual(preview_viewer["security"]["risk_level"], "medium")
+
         allowed = self.evaluate(
             "清理 /tmp 临时文件",
             {"user_role": "operator", "path": "/tmp", "dry_run": True},
@@ -188,6 +241,27 @@ class ControlledToolSecurityTests(unittest.TestCase):
         self.assertIn("execution_result", stages)
         self.assertIn("final_answer", stages)
         self.assertIn("trace_complete", stages)
+
+    def test_blocked_conclusion_surfaces_security_reasons(self) -> None:
+        result = self.agent.run(
+            "清理 /tmp 临时文件",
+            "viewer1",
+            {"path": "/tmp"},
+            approved=False,
+        )
+        self.assertTrue(result.blocked)
+        reason_text = "\n".join(
+            [
+                result.conclusion["conclusion"],
+                result.conclusion["root_cause"],
+                *result.conclusion["evidence"],
+            ]
+        )
+        # User-facing reasons are localized to Chinese; raw English stays in
+        # the security block.
+        self.assertIn("角色 viewer 无权执行中风险操作", reason_text)
+        self.assertIn("需要二次确认", reason_text)
+        self.assertIn("role viewer is not allowed for risk level medium", result.security["reasons"])
 
     def test_executed_commands_are_written_to_audit_trace(self) -> None:
         registry = ToolRegistry()

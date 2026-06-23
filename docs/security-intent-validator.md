@@ -24,6 +24,26 @@ The validator records all seven checks:
 6. `user_permission`: medium/high operations require privileged roles.
 7. `secondary_confirmation` and `audit_logging`: confirmation is required for medium risk; every execution is audited.
 
+### Dry-run preview exemption (temp.clean)
+
+A `temp.clean` call with `dry_run=true` over a safe temp directory has no side
+effects (it only lists what *would* be removed). Such a verified preview keeps
+its **medium** risk level — so the `operator`/`admin` role is still required and
+`viewer` is still blocked — but **waives secondary confirmation**
+(`_confirmation_waived_by_preview`). The waiver requires `dry_run` to be exactly
+`true` and a safe path, and refuses if any other controlled operation is bundled
+in. The executor passes those same arguments (with `dry_run=true`) to the tool,
+which independently honors `dry_run`, so no deletion can occur — making the
+no-side-effect invariant explicit. Risk level itself is never downgraded by a
+runtime argument, so the tool's declared `risk_level` stays authoritative.
+
+### Localized reasons
+
+Guard reason strings stay English in the `security` block (stable contract for
+audit and tests). They are translated to Chinese only at the user-facing
+blocked conclusion via `backend/agent/reason_localizer.py`; unmapped or
+already-Chinese reasons pass through unchanged.
+
 ## Multi-step orchestration
 
 For multi-step tool chains (see `docs/llm-agent-json-contract.md`), the validator

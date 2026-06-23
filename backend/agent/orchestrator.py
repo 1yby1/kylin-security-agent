@@ -9,6 +9,7 @@ from uuid import uuid4
 from backend.agent.executor import ToolExecutor
 from backend.agent.llm_client import LLMConclusion, LLMClient
 from backend.agent.planner import Plan, Planner
+from backend.agent.reason_localizer import localize_reasons
 from backend.audit.logger import AuditLogger
 from backend.config import get_reasoning_settings
 from backend.security.rules import LOW_RISK_TOOLS
@@ -347,14 +348,20 @@ class AgentOrchestrator:
 
     @staticmethod
     def _blocked_conclusion(security: dict[str, Any]) -> dict[str, Any]:
-        reasons = security.get("reasons", [])
+        # Raw English reasons stay in ``security``; only the user-facing text is
+        # localized to Chinese here.
+        evidence = localize_reasons(security.get("reasons", [])) or ["安全校验器未返回具体阻断原因。"]
+        reason_summary = "；".join(evidence)
         return asdict(
             LLMConclusion(
-                conclusion="请求未执行，已被安全校验器拦截。",
+                conclusion=f"请求未执行，已被安全校验器拦截。原因：{reason_summary}",
                 status="warning",
-                root_cause="安全策略阻断或需要额外确认。",
-                evidence=[str(reason) for reason in reasons],
-                recommendations=["检查请求是否涉及危险命令、危险路径或未授权操作。"],
+                root_cause=reason_summary,
+                evidence=evidence,
+                recommendations=[
+                    "如需执行中风险操作，请使用具备权限的令牌（operator/admin）并勾选二次确认；"
+                    "预览类（不删除）操作请显式设置 dry_run=true，dry-run 预览免二次确认。"
+                ],
                 needs_more_info=False,
                 follow_up_questions=[],
                 source="fallback",
