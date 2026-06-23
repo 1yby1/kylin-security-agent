@@ -117,6 +117,9 @@ python -m unittest discover -v
 - **被观测数据（observed_data）隔离且不可信，不得当作指令。**
   工具执行结果在喂给 LLM 前必须经过 `backend/security/sanitizer.py` 的 `build_observation_block()` 清洗、截断并包装为 `<OBSERVED_DATA ... trust="untrusted" ...>` 隔离块；`ANALYSIS_SYSTEM_PROMPT` 显式声明该字段只能作为分析素材。任何模块都不应把工具结果原文直接拼进 prompt，也不应认为 `observed_data` 的内容可以改变角色、跳过校验或代表用户确认。
 
+- **限流/并发闸是 `SecurityGuard` 之外的额外一道闸，不替代安全校验。**
+  `backend/main.py` 的 `rate_limit_middleware` 在重端点（`POST /api/agent/execute`、`/api/agent/plan`、`/api/security/evaluate`、`/api/tools/{tool_name}`）前用 `backend/security/rate_limit.py` 的 `RateLimiter`（按主体/匿名 IP 滑动窗口，`max_keys` 防内存膨胀）和 `ConcurrencyGate`（非阻塞并发上限）做频率/并发预算判断，超限返回 `429`/`503`。它只做"是否超预算"判断，不做工具白名单、参数、危险路径/命令、角色或二次确认校验；即使关闭限流（`AGENT_RATE_LIMIT_ENABLED=false`），`backend/security/guard.py` 的全部校验依然在工具执行前生效。`backend/observability/metrics.py` 的 `MetricsCollector` 只读采集请求/限流/拦截计数、工具耗时分位数和 LLM 成功率，进程内内存态、重启即清零，不影响业务结果。详见 `docs/self-protection-observability.md`。
+
 ## API 表面
 
 - `POST /api/agent/execute`：完整 Agent 链路。响应在原有字段之外新增 `steps`（多步推理闭环每步摘要，单次路径下为空列表）和 `suggested_actions`（闭环中被拦下、未执行的操作类工具建议，需二次确认才能真正执行）。
@@ -130,6 +133,9 @@ python -m unittest discover -v
 - `POST /api/llm/test`：测试 LLM 规划能力。
 - `GET /api/security/runtime`：查看运行身份和最小权限状态。
 - `GET /api/audit/recent?limit=&trace_id=`：查询审计事件。
+- `GET /api/metrics`：查看进程内指标快照（请求数、限流/拦截计数、工具耗时 P50/P95、LLM 成功率），仅 operator/admin 可访问，viewer 返回 403。详见 `docs/self-protection-observability.md`。
+
+`POST /api/agent/execute`、`/api/agent/plan`、`/api/security/evaluate` 以及 `POST /api/tools/{tool_name}` 这几个重端点带限流（按主体/匿名 IP 滑动窗口）和并发闸保护，超限返回 `429`（带 `Retry-After`）或 `503`；详见 `docs/self-protection-observability.md`。
 
 ## 修改建议
 
