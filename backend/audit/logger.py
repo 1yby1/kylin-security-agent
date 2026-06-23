@@ -49,8 +49,16 @@ class AuditLogger:
             }
         )
 
-    def read_recent(self, limit: int = 100, trace_id: str | None = None) -> list[dict[str, Any]]:
-        return self._store.read_recent(limit=limit, trace_id=trace_id)
+    def read_recent(
+        self,
+        limit: int = 100,
+        trace_id: str | None = None,
+        user_id: str | None = None,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        # Filtering is pushed into the SQL query so LIMIT is applied AFTER the
+        # user_id/status filter, not before.
+        return self._store.query(limit=limit, trace_id=trace_id, user_id=user_id, status=status)
 
     def verify_chain(self) -> dict[str, Any]:
         return self._store.verify_chain()

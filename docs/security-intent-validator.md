@@ -24,6 +24,25 @@ The validator records all seven checks:
 6. `user_permission`: medium/high operations require privileged roles.
 7. `secondary_confirmation` and `audit_logging`: confirmation is required for medium risk; every execution is audited.
 
+## Multi-step orchestration
+
+For multi-step tool chains (see `docs/llm-agent-json-contract.md`), the validator
+runs **once per step**, not once per plan. `ToolExecutor.execute()` checks each
+step's tool and its fully-resolved arguments with `SecurityGuard.check()` right
+before that step runs.
+
+- Step argument references (`"${stepId.path}"`) are resolved to concrete values
+  **before** the step's security check, so the guard always sees real values. An
+  unresolved placeholder would fail `parameter_values` (the safe-character set
+  excludes `$`, `{`, `}`), so a placeholder can never reach a tool handler.
+- A blocked or failed step **fails fast**: the chain stops and no later step runs.
+- `ExecutionResult.security` aggregates the per-step decisions: `risk_level` is
+  the maximum across steps, `reasons`/`checks` are merged, and `blocked_step`
+  identifies the first step that was blocked.
+- `POST /api/security/evaluate` cannot execute tools, so steps whose arguments
+  still contain references are reported as `deferred` and excluded from the
+  blocking decision; their real check happens at execution time.
+
 ## User Roles
 
 - `viewer`: low-risk read-only operations only.

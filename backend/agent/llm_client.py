@@ -11,6 +11,19 @@ from backend.agent.prompt import ANALYSIS_SYSTEM_PROMPT, PLANNING_SYSTEM_PROMPT
 from backend.config import LLMSettings, get_llm_settings
 
 
+ALLOWED_TOOLS = {
+    "system",
+    "process",
+    "process.kill",
+    "network",
+    "log",
+    "service",
+    "service.restart",
+    "temp.clean",
+    "disk",
+}
+
+
 @dataclass(frozen=True)
 class LLMDecision:
     intent: str
@@ -20,6 +33,7 @@ class LLMDecision:
     risk_hint: str = "low"
     need_confirmation: bool = False
     reasoning: list[str] | None = None
+    steps: list[dict[str, Any]] | None = None
 
 
 @dataclass(frozen=True)
@@ -73,11 +87,11 @@ class LLMClient:
             self._last_error = "LLM returned empty or non-JSON planning content"
             return None
 
-        tools = [
-            tool
-            for tool in data.get("tools", [])
-            if tool in {"system", "process", "process.kill", "network", "log", "service", "service.restart", "temp.clean", "disk"}
-        ]
+        steps = self._parse_steps(data.get("steps"))
+        if steps:
+            tools = list(dict.fromkeys(step["tool"] for step in steps))
+        else:
+            tools = [tool for tool in data.get("tools", []) if tool in ALLOWED_TOOLS]
         if not tools:
             self._last_error = "LLM planning JSON did not contain valid registered tools"
             return None
@@ -90,7 +104,44 @@ class LLMClient:
             risk_hint=data.get("risk_hint", "low"),
             need_confirmation=bool(data.get("need_confirmation", False)),
             reasoning=data.get("reasoning", []),
+            steps=steps,
         )
+
+    @staticmethod
+    def _parse_steps(raw_steps: Any) -> list[dict[str, Any]] | None:
+        """Normalize an optional orchestration ``steps`` array.
+
+        Each valid step must reference a registered tool. Missing ids are
+        auto-assigned ``s1``, ``s2``, ... Returns ``None`` when no usable step
+        is present so callers fall back to the flat ``tools`` contract.
+        """
+        if not isinstance(raw_steps, list) or not raw_steps:
+            return None
+        cleaned: list[dict[str, Any]] = []
+        for index, item in enumerate(raw_steps):
+            if not isinstance(item, dict):
+                continue
+            tool = item.get("tool")
+            if tool not in ALLOWED_TOOLS:
+                continue
+            step_arguments = item.get("arguments")
+            if not isinstance(step_arguments, dict):
+                step_arguments = {}
+            cleaned.append(
+                {
+                    "id": str(item.get("id") or f"s{index + 1}"),
+                    "tool": tool,
+                    "arguments": step_arguments,
+                }
+            )
+        if not cleaned:
+            return None
+        ids = [step["id"] for step in cleaned]
+        if len(ids) != len(set(ids)):
+            # Duplicate step ids make references ambiguous; reject the whole
+            # orchestration so the caller falls back to the flat tool list.
+            return None
+        return cleaned
 
     def conclude(
         self,
