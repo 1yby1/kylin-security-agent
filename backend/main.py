@@ -15,9 +15,11 @@ from pydantic import BaseModel, Field
 from backend.agent.orchestrator import AgentOrchestrator
 from backend.agent.planner import Plan, Planner
 from backend.audit.logger import AuditLogger
-from backend.config import get_rate_limit_settings
+from backend.config import get_monitor_settings, get_rate_limit_settings
 from backend.database.db import init_db
 from backend.mcp_server.server import build_session_manager
+from backend.monitor.alerts import AlertStore
+from backend.monitor.scheduler import MonitorScheduler
 from backend.observability.metrics import get_metrics
 from backend.security.auth import parse_bearer, resolve_role, session_principal
 from backend.security.least_privilege import runtime_identity
@@ -42,8 +44,13 @@ async def handle_mcp(scope, receive, send) -> None:
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
-    async with mcp_session_manager.run():
-        yield
+    if _monitor_settings.enabled:
+        _monitor_scheduler.start()
+    try:
+        async with mcp_session_manager.run():
+            yield
+    finally:
+        _monitor_scheduler.stop()
 
 
 app = FastAPI(title="Software Cup Ops Assistant", version="0.1.0", lifespan=lifespan)
@@ -59,6 +66,10 @@ app.add_middleware(
 _rl_settings = get_rate_limit_settings()
 _rate_limiter = RateLimiter(_rl_settings.per_minute, 60.0)
 _concurrency = ConcurrencyGate(_rl_settings.max_concurrent)
+
+_monitor_settings = get_monitor_settings()
+_alert_store = AlertStore()
+_monitor_scheduler = MonitorScheduler(executor, _alert_store, _monitor_settings, audit)
 
 _HEAVY_PATHS = {"/api/agent/execute", "/api/agent/plan", "/api/security/evaluate"}
 
@@ -278,6 +289,19 @@ def plan_agent(request: AgentRequest, authorization: str | None = Header(default
 @app.get("/api/security/runtime")
 def security_runtime() -> dict[str, Any]:
     return {"runtime_identity": runtime_identity().to_dict()}
+
+
+@app.get("/api/alerts")
+def list_alerts(limit: int = 100, authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    role = _role_from_header(authorization)
+    if role not in {"operator", "admin"}:
+        raise HTTPException(status_code=403, detail="alerts 仅 operator/admin 可访问")
+    return {"alerts": _alert_store.recent(limit)}
+
+
+@app.get("/api/monitor/status")
+def monitor_status() -> dict[str, Any]:
+    return _monitor_scheduler.status()
 
 
 @app.get("/api/metrics")
