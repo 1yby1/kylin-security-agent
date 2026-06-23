@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+import json
+
+from dataclasses import asdict, dataclass, field
 from typing import Any
 from uuid import uuid4
 
@@ -8,6 +10,9 @@ from backend.agent.executor import ToolExecutor
 from backend.agent.llm_client import LLMConclusion, LLMClient
 from backend.agent.planner import Plan, Planner
 from backend.audit.logger import AuditLogger
+from backend.config import get_reasoning_settings
+from backend.security.rules import LOW_RISK_TOOLS
+from backend.security.sanitizer import scan_injection
 
 
 @dataclass(frozen=True)
@@ -23,6 +28,8 @@ class AgentRunResult:
     executed_commands: list[dict[str, Any]]
     conclusion: dict[str, Any]
     plan: dict[str, Any]
+    steps: list[dict[str, Any]] = field(default_factory=list)
+    suggested_actions: list[dict[str, Any]] = field(default_factory=list)
 
 
 class AgentOrchestrator:
@@ -63,73 +70,139 @@ class AgentOrchestrator:
             status=plan.source,
             data={"plan": plan_data},
         )
+        if approved or not self._is_read_only(plan.tools):
+            return self._run_single(trace_id, query, user_id, context, approved, role, plan, plan_data)
+        return self._run_loop(trace_id, query, user_id, context, role, plan, plan_data)
+
+    @staticmethod
+    def _is_read_only(tools: list[str]) -> bool:
+        return bool(tools) and all(tool in LOW_RISK_TOOLS for tool in tools)
+
+    def _run_single(self, trace_id, query, user_id, context, approved, role, plan, plan_data) -> AgentRunResult:
         execution = self._executor.execute(
-            plan=plan,
-            user_id=user_id,
-            raw_query=query,
-            approved=approved,
-            trace_id=trace_id,
-            role=role,
+            plan=plan, user_id=user_id, raw_query=query,
+            approved=approved, trace_id=trace_id, role=role,
         )
         self._audit.event(
-            trace_id=trace_id,
-            stage="environment_perception",
-            user_id=user_id,
+            trace_id=trace_id, stage="environment_perception", user_id=user_id,
             status="completed" if not execution.blocked else "skipped",
-            data={
-                "tools": plan.tools,
-                "executed_commands": execution.executed_commands,
-                "result": execution.result,
-            },
+            data={"tools": plan.tools, "executed_commands": execution.executed_commands, "result": execution.result},
         )
         self._audit.event(
-            trace_id=trace_id,
-            stage="execution_result",
-            user_id=user_id,
+            trace_id=trace_id, stage="execution_result", user_id=user_id,
             status="blocked" if execution.blocked else "completed",
             data={
-                "approved_required": execution.approved_required,
-                "blocked": execution.blocked,
-                "message": execution.message,
-                "executed_commands": execution.executed_commands,
-                "result": execution.result,
-                "security": execution.security,
+                "approved_required": execution.approved_required, "blocked": execution.blocked,
+                "message": execution.message, "executed_commands": execution.executed_commands,
+                "result": execution.result, "security": execution.security,
             },
         )
         conclusion = self._conclude(query, plan, execution.security, execution.result, execution.blocked)
         self._audit.event(
-            trace_id=trace_id,
-            stage="final_answer",
-            user_id=user_id,
-            status=conclusion.get("status", "unknown"),
-            data={"conclusion": conclusion},
+            trace_id=trace_id, stage="final_answer", user_id=user_id,
+            status=conclusion.get("status", "unknown"), data={"conclusion": conclusion},
         )
         self._audit.event(
-            trace_id=trace_id,
-            stage="trace_complete",
-            user_id=user_id,
+            trace_id=trace_id, stage="trace_complete", user_id=user_id,
             status="blocked" if execution.blocked else "completed",
-            data={
-                "query": query,
-                "plan": plan_data,
-                "security": execution.security,
-                "executed_commands": execution.executed_commands,
-                "final_answer": conclusion,
-            },
+            data={"query": query, "plan": plan_data, "security": execution.security,
+                  "executed_commands": execution.executed_commands, "final_answer": conclusion},
         )
         return AgentRunResult(
-            trace_id=trace_id,
-            intent=plan.intent,
-            tools=plan.tools,
-            approved_required=execution.approved_required,
-            blocked=execution.blocked,
-            message=execution.message,
-            result=execution.result,
-            security=execution.security,
-            executed_commands=execution.executed_commands,
-            conclusion=conclusion,
-            plan=plan_data,
+            trace_id=trace_id, intent=plan.intent, tools=plan.tools,
+            approved_required=execution.approved_required, blocked=execution.blocked,
+            message=execution.message, result=execution.result, security=execution.security,
+            executed_commands=execution.executed_commands, conclusion=conclusion, plan=plan_data,
         )
+
+    def _run_loop(self, trace_id, query, user_id, context, role, first_plan, first_plan_data) -> AgentRunResult:
+        max_steps = get_reasoning_settings().max_steps
+        executed: set[str] = set()
+        combined: dict[str, Any] = {}
+        commands: list[dict[str, Any]] = []
+        steps: list[dict[str, Any]] = []
+        suggested: list[dict[str, Any]] = []
+        last_security: dict[str, Any] = {}
+        message = "Execution completed."
+        blocked = False
+        current = first_plan
+
+        for index in range(1, max_steps + 1):
+            execution = self._executor.execute(
+                plan=current, user_id=user_id, raw_query=query,
+                approved=False, trace_id=trace_id, role=role,
+            )
+            last_security = execution.security
+            combined.update(execution.result)
+            commands.extend(execution.executed_commands)
+            executed.update(current.tools)
+            hits = scan_injection(json.dumps(execution.result, ensure_ascii=False))
+            if hits:
+                self._audit.event(
+                    trace_id=trace_id, stage="injection_scan", user_id=user_id,
+                    status="injection_suspected",
+                    data={"step": index, "patterns": hits, "tools": current.tools},
+                )
+            steps.append({
+                "step": index, "tools": current.tools, "source": current.source,
+                "observation_summary": self._summarize_observation(execution.result),
+                "injection_suspected": bool(hits),
+            })
+            self._audit.event(
+                trace_id=trace_id, stage="reasoning_step", user_id=user_id,
+                status="blocked" if execution.blocked else "completed",
+                data={"step": index, "plan": self._plan_to_dict(current), "result": execution.result},
+            )
+            if execution.blocked:
+                blocked = True
+                message = execution.message
+                break
+            if index == max_steps:
+                break
+            next_plan = self._planner.plan_next(query, context, combined, executed, self._executor.tool_manifest())
+            if next_plan is None:
+                break
+            operation_tools = [tool for tool in next_plan.tools if tool not in LOW_RISK_TOOLS]
+            if operation_tools:
+                for tool in operation_tools:
+                    suggested.append({"tool": tool, "arguments": next_plan.arguments, "reason": next_plan.summary})
+                self._audit.event(
+                    trace_id=trace_id, stage="suggested_action", user_id=user_id,
+                    status="pending_confirmation", data={"suggested_actions": suggested},
+                )
+                break
+            current = next_plan
+
+        conclusion = self._conclude(query, first_plan, last_security, combined, blocked)
+        self._audit.event(
+            trace_id=trace_id, stage="final_answer", user_id=user_id,
+            status=conclusion.get("status", "unknown"),
+            data={"conclusion": conclusion, "steps": steps, "suggested_actions": suggested},
+        )
+        self._audit.event(
+            trace_id=trace_id, stage="trace_complete", user_id=user_id,
+            status="blocked" if blocked else "completed",
+            data={"query": query, "plan": first_plan_data, "steps": steps,
+                  "suggested_actions": suggested, "final_answer": conclusion},
+        )
+        return AgentRunResult(
+            trace_id=trace_id, intent=first_plan.intent, tools=sorted(executed),
+            approved_required=bool(suggested), blocked=blocked, message=message,
+            result=combined, security=last_security, executed_commands=commands,
+            conclusion=conclusion, plan=first_plan_data, steps=steps, suggested_actions=suggested,
+        )
+
+    @staticmethod
+    def _summarize_observation(result: dict[str, Any]) -> str:
+        parts: list[str] = []
+        for name, value in result.items():
+            if isinstance(value, dict) and value.get("error"):
+                parts.append(f"{name}: 错误 {value['error']}")
+            elif isinstance(value, dict) and "analysis" in value:
+                parts.append(f"{name}: {value['analysis']}")
+            else:
+                parts.append(f"{name}: 已采集")
+        return "; ".join(parts)[:300]
 
     def evaluate_security(self, query: str, user_id: str, context: dict[str, Any], approved: bool = False, role: str | None = None) -> dict[str, Any]:
         plan = self._planner.plan(query, context, self._executor.tool_manifest())
