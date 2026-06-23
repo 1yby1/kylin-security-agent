@@ -123,3 +123,27 @@ def get_reasoning_settings() -> ReasoningSettings:
     except ValueError:
         steps = 3
     return ReasoningSettings(max_steps=max(1, min(steps, 10)))
+
+
+@dataclass(frozen=True)
+class RateLimitSettings:
+    enabled: bool
+    per_minute: int
+    max_concurrent: int
+
+
+def get_rate_limit_settings() -> RateLimitSettings:
+    enabled = os.getenv("AGENT_RATE_LIMIT_ENABLED", "true").strip().lower() not in {"0", "false", "no"}
+    try:
+        per_minute = int(os.getenv("AGENT_RATE_LIMIT_PER_MIN", "30"))
+    except ValueError:
+        per_minute = 30
+    try:
+        max_concurrent = int(os.getenv("AGENT_MAX_CONCURRENT", "8"))
+    except ValueError:
+        max_concurrent = 8
+    return RateLimitSettings(
+        enabled=enabled,
+        per_minute=max(1, per_minute),
+        max_concurrent=max(1, max_concurrent),
+    )
