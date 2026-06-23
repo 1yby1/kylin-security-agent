@@ -17,11 +17,13 @@ ALLOWED_TOOLS = {
     "process",
     "process.kill",
     "network",
+    "network.diagnostics",
     "log",
     "service",
     "service.restart",
     "temp.clean",
     "disk",
+    "disk.large_files",
 }
 
 

@@ -4,7 +4,16 @@ import re
 from dataclasses import dataclass
 
 
-LOW_RISK_TOOLS = {"system", "process", "network", "log", "service", "disk"}
+LOW_RISK_TOOLS = {
+    "system",
+    "process",
+    "network",
+    "network.diagnostics",
+    "log",
+    "service",
+    "disk",
+    "disk.large_files",
+}
 MEDIUM_RISK_TOOLS = {"service.restart", "temp.clean", "process.kill"}
 HIGH_RISK_TOOLS = {"config.modify", "permission.modify", "user.modify", "service.stop"}
 
