@@ -99,6 +99,9 @@ python -m unittest discover -v
 - **只读扫描工具按目标路径动态评级。**  
   `disk.large_files`、`disk.top_dirs`、`package.repo`（`backend/security/rules.py` 的 `READ_SCAN_TOOLS`）虽是只读低风险工具，但 `SecurityGuard._scan_path_risk` 会校验其目标路径：路径在 `SAFE_SCAN_DIRS` 白名单内时维持 `low`（viewer 可用），否则升级为 `medium`（需 operator/admin + 二次确认），防止低权限用户递归扫描任意路径导致信息泄露或 DoS。两个磁盘扫描工具还有 `_MAX_SCAN_ENTRIES` 遍历预算上限；`package.repo` 对仓库 URL 中的内嵌凭据做脱敏。
 
+- **安全态势工具对低权限调用方按角色脱敏。**  
+  `auth`、`firewall`、`privilege` 返回侦察级明细（来源 IP、开放端口清单、SUID 文件、UID0/空密码账户名）。`backend/security/redaction.py` 的 `redact_security_tool_output` 在 `ToolExecutor` 返回结果前按角色脱敏：operator/admin 得全量，viewer 只得计数与风险标志（带 `detail_redacted: true`）。脱敏只作用于返回值，审计与步骤引用仍保留全量。详见 `docs/security-posture-tools.md`。
+
 - **最小权限逻辑只在 Linux 上降权。**  
   `backend/security/least_privilege.py` 会在 root 进程且目标用户可解析时为子进程设置 `user`、`group` 和 `extra_groups`。`AGENT_STRICT_LEAST_PRIVILEGE=true` 时，如果 root 进程无法解析低权限用户，应拒绝启动命令。
 

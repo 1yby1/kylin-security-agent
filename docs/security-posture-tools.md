@@ -135,6 +135,26 @@ SUID/SGID 扫描限定在 `/usr/bin`、`/usr/sbin`、`/bin`、`/sbin`、
   `suggested_actions`，等待人工二次确认。完整规则见
   `docs/multi-step-reasoning.md`。
 
+## 角色分级输出脱敏（RBAC redaction）
+
+`auth`/`firewall`/`privilege` 返回的明细是侦察级敏感信息（失败登录来源 IP、开放端口
+清单、SUID 文件清单、UID0/空密码账户名）。由于三者在 `LOW_RISK_TOOLS` 内、无令牌
+viewer 即可调用，`backend/security/redaction.py` 的 `redact_security_tool_output`
+在 `ToolExecutor` 返回结果前按角色脱敏：
+
+- **operator / admin**：返回全量结果。
+- **viewer（默认、无令牌）**：只返回计数与风险标志，剥离明细，并加 `detail_redacted: true`：
+  - `auth`：保留各类登录计数、`root_remote_login`、`top_source_ip_count`；剥离原始
+    `last`/`lastb`/`who` 与 `top_source_ips`（IP 明细）。
+  - `firewall`：保留 `running`、端口/服务数量、`high_risk_exposed` 告警；剥离原始输出与
+    `open_ports`/`open_services` 明细清单。
+  - `privilege`：保留 SUID/SGID 数量、`extra_uid0_count`、`empty_password_count`、
+    `shadow_readable`；剥离原始输出、`suid_files` 清单与 UID0/空密码账户名。
+
+脱敏只作用于返回给调用方与 LLM 的结果；**审计（`_audit.write`）与步骤引用（`outputs`）
+仍保留全量**，便于取证与多步编排。脱敏在 `executor` 层集中实现，工具本身保持角色无关，
+`/api/agent/execute`（闭环）与 `/api/tools/{name}`（直调）两条路径都被覆盖。
+
 ## API 调用示例
 
 直接调用单个工具：
