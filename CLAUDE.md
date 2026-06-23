@@ -102,6 +102,9 @@ python -m unittest discover -v
 - **安全态势工具对低权限调用方按角色脱敏。**  
   `auth`、`firewall`、`privilege` 返回侦察级明细（来源 IP、开放端口清单、SUID 文件、UID0/空密码账户名）。`backend/security/redaction.py` 的 `redact_security_tool_output` 在 `ToolExecutor` 返回结果前按角色脱敏：operator/admin 得全量，viewer 只得计数与风险标志（带 `detail_redacted: true`）。脱敏只作用于返回值，审计与步骤引用仍保留全量。详见 `docs/security-posture-tools.md`。
 
+- **会话上下文按主体绑定，且 ID 由服务端签发。**  
+  多轮会话（`backend/agent/session_context.py`）把上一轮实体注入下一轮规划。`ConversationState.owner` 绑定调用方主体（`backend/security/auth.py` 的 `session_principal`：无令牌为 `anon`，有令牌为 token 的 sha256 派生值）。`resolve_session_id` 只认"已存在且 owner 匹配"的 ID，否则签发新随机 uuid——调用方不能自选/猜测/冒用会话；`context` 对 owner 不匹配返回空。存储有 `max_sessions` 上限并按 `updated_at` LRU 淘汰。`/api/agent/plan` 与 `execute` 一致地按 owner 注入会话上下文（只读不写）。详见 `docs/session-context-security.md`。
+
 - **最小权限逻辑只在 Linux 上降权。**  
   `backend/security/least_privilege.py` 会在 root 进程且目标用户可解析时为子进程设置 `user`、`group` 和 `extra_groups`。`AGENT_STRICT_LEAST_PRIVILEGE=true` 时，如果 root 进程无法解析低权限用户，应拒绝启动命令。
 

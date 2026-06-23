@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import hmac
 
 from backend.config import AuthSettings, get_auth_settings
@@ -29,3 +30,18 @@ def resolve_role(token: str | None, settings: AuthSettings | None = None) -> str
             if hmac.compare_digest(token, known):
                 return role
     return settings.default_role
+
+
+def session_principal(token: str | None) -> str:
+    """Stable per-token principal used to bind conversation sessions.
+
+    Conversation sessions are bound to the presenting principal so a leaked
+    ``session_id`` cannot be replayed under a different identity. No token maps
+    to a shared anonymous principal (``anon``); a token maps to a hash-derived
+    id that never stores the secret in cleartext. This is the strongest anchor
+    available under the project's role-based (not per-user) auth model.
+    """
+    if not token:
+        return "anon"
+    digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    return f"tok:{digest[:16]}"

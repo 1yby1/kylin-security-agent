@@ -17,7 +17,7 @@ from backend.agent.planner import Plan, Planner
 from backend.audit.logger import AuditLogger
 from backend.database.db import init_db
 from backend.mcp_server.server import build_session_manager
-from backend.security.auth import parse_bearer, resolve_role
+from backend.security.auth import parse_bearer, resolve_role, session_principal
 from backend.security.least_privilege import runtime_identity
 
 
@@ -118,7 +118,8 @@ def health() -> dict[str, str]:
 
 @app.post("/api/agent/execute", response_model=AgentResponse)
 def execute_agent(request: AgentRequest, authorization: str | None = Header(default=None)) -> AgentResponse:
-    role = _role_from_header(authorization)
+    token = parse_bearer(authorization)
+    role = resolve_role(token)
     run = agent.run(
         query=request.query,
         user_id=request.user_id,
@@ -126,6 +127,7 @@ def execute_agent(request: AgentRequest, authorization: str | None = Header(defa
         approved=request.approved,
         role=role,
         session_id=request.session_id,
+        owner=session_principal(token),
     )
     return AgentResponse(
         trace_id=run.trace_id,
@@ -183,8 +185,14 @@ def evaluate_security(request: AgentRequest, authorization: str | None = Header(
 
 
 @app.post("/api/agent/plan")
-def plan_agent(request: AgentRequest) -> dict[str, Any]:
+def plan_agent(request: AgentRequest, authorization: str | None = Header(default=None)) -> dict[str, Any]:
     context = _strip_client_role(request.context)
+    owner = session_principal(parse_bearer(authorization))
+    # Stateless endpoint: read the same follow-up context execute would inject,
+    # but never create or mutate a session.
+    conversation = agent.conversation_context(request.session_id, owner)
+    if conversation:
+        context = {**context, "conversation": conversation}
     trace_id = uuid4().hex
     audit.event(
         trace_id=trace_id,

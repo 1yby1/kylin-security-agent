@@ -107,11 +107,12 @@ class OrchestratorSessionContextTests(unittest.TestCase):
         orchestrator = AgentOrchestrator(planner=planner, executor=executor, session_store=store)
         orchestrator._llm_client.conclude = lambda **kwargs: None  # type: ignore
 
-        first = orchestrator.run("查看 CPU 最高进程", "u1", {}, session_id="demo", role="viewer")
-        second = orchestrator.run("那再看下那个进程", "u1", {}, session_id="demo", role="viewer")
+        first = orchestrator.run("查看 CPU 最高进程", "u1", {}, role="viewer")
+        session_id = first.session_id
+        second = orchestrator.run("那再看下那个进程", "u1", {}, session_id=session_id, role="viewer")
 
-        self.assertEqual(first.session_id, "demo")
-        self.assertEqual(second.session_id, "demo")
+        self.assertTrue(session_id)
+        self.assertEqual(second.session_id, session_id)
         self.assertEqual(planner.contexts[1]["conversation"]["last_entities"]["pid"], "4321")
         self.assertIn("pid=4321", second.context_summary)
 
