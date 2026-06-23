@@ -1,17 +1,24 @@
 from __future__ import annotations
 
 import configparser
-import os
+import re
 import shutil
-import subprocess
 from pathlib import Path
 from typing import Any
 
-from backend.config import get_runtime_settings
-from backend.security.least_privilege import subprocess_security_options
+from backend.mcp_tools.command_runner import run_optional_template
 
 
 DEFAULT_REPO_DIR = "/etc/yum.repos.d"
+
+# 匹配 URL 中内嵌的 user:password@，脱敏后避免把仓库凭据返回给调用方。
+_CRED_RE = re.compile(r"://[^/@\s:]+:[^/@\s]+@")
+
+
+def _mask_url(value: str) -> str:
+    if not value:
+        return value
+    return _CRED_RE.sub("://***:***@", value)
 
 
 def run(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -68,9 +75,9 @@ def _read_repo_files(repo_dir: Path) -> tuple[list[dict[str, str]], list[dict[st
                     "id": section,
                     "name": parser.get(section, "name", fallback=""),
                     "enabled": parser.get(section, "enabled", fallback="1"),
-                    "baseurl": parser.get(section, "baseurl", fallback=""),
-                    "mirrorlist": parser.get(section, "mirrorlist", fallback=""),
-                    "metalink": parser.get(section, "metalink", fallback=""),
+                    "baseurl": _mask_url(parser.get(section, "baseurl", fallback="")),
+                    "mirrorlist": _mask_url(parser.get(section, "mirrorlist", fallback="")),
+                    "metalink": _mask_url(parser.get(section, "metalink", fallback="")),
                     "gpgcheck": parser.get(section, "gpgcheck", fallback=""),
                     "file": str(repo_file),
                 }
@@ -79,25 +86,5 @@ def _read_repo_files(repo_dir: Path) -> tuple[list[dict[str, str]], list[dict[st
 
 
 def _run_repolist(manager: str) -> dict[str, Any]:
-    command = [manager, "repolist", "--enabled"]
-    try:
-        runtime_settings = get_runtime_settings()
-        security_options, identity = subprocess_security_options(runtime_settings)
-        completed = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            timeout=10,
-            check=False,
-            cwd=runtime_settings.safe_workdir if os.name != "nt" else None,
-            **security_options,
-        )
-        return {
-            "command": " ".join(command),
-            "exit_code": completed.returncode,
-            "stdout": completed.stdout.splitlines()[:80],
-            "stderr": completed.stderr.splitlines()[:80],
-            "execution_identity": identity.to_dict(),
-        }
-    except Exception as exc:  # pragma: no cover - depends on target OS utilities
-        return {"command": " ".join(command), "exit_code": None, "stdout": [], "stderr": [str(exc)]}
+    # 通过命令模板执行（白名单 + 最小权限），不直接调用 subprocess。
+    return run_optional_template(f"package.repolist.{manager}", timeout=10)

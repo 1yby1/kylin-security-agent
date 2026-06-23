@@ -317,7 +317,6 @@ class Planner:
                 "large file",
                 "largest",
                 "big file",
-                "du",
                 "大文件",
                 "最大文件",
                 "谁占",
@@ -327,7 +326,7 @@ class Planner:
                 "磁盘满",
                 "空间不足",
             ],
-        )
+        ) or cls._has_word(text, "du")
 
     @classmethod
     def _is_top_dirs_request(cls, text: str) -> bool:
@@ -342,12 +341,16 @@ class Planner:
                 "哪些目录",
                 "子目录",
                 "文件夹占用",
-                "du",
                 "谁占",
                 "磁盘满",
                 "空间不足",
             ],
-        )
+        ) or cls._has_word(text, "du")
+
+    @staticmethod
+    def _has_word(text: str, word: str) -> bool:
+        """命令词边界匹配，避免 'du' 命中 module/schedule 等普通子串而误触发重扫描。"""
+        return re.search(rf"\b{re.escape(word)}\b", text) is not None
 
     @classmethod
     def _is_network_config_request(cls, text: str) -> bool:

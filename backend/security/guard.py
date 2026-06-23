@@ -11,6 +11,7 @@ from backend.security.rules import (
     ADMIN_ROLES,
     CORE_SYSTEM_PATHS,
     DANGEROUS_COMMAND_PATTERNS,
+    DEFAULT_SCAN_PATHS,
     HIGH_RISK_TOOLS,
     LOW_RISK_TOOLS,
     MEDIUM_RISK_TOOLS,
@@ -18,7 +19,9 @@ from backend.security.rules import (
     PROTECTED_PID_MAX,
     PROTECTED_PROCESS_NAMES,
     PROTECTED_SERVICES,
+    READ_SCAN_TOOLS,
     RISK_POLICIES,
+    SAFE_SCAN_DIRS,
     SAFE_STRING_PATTERN,
     SAFE_TEMP_DIRS,
     SERVICE_RESTART_ALLOWLIST,
@@ -325,7 +328,25 @@ class SecurityGuard:
             if service_name and service_name not in SERVICE_RESTART_ALLOWLIST:
                 risk_level = self._max_risk(risk_level, "high")
 
+        risk_level = self._max_risk(risk_level, self._scan_path_risk(tools, arguments))
+
         return risk_level
+
+    @staticmethod
+    def _scan_path_risk(tools: list[str], arguments: dict[str, Any]) -> str:
+        """Read-only scan tools stay low only when their target path is inside
+        the allowlist; any other (or missing) path escalates to medium so a
+        viewer cannot recursively scan arbitrary paths."""
+        for tool_name in tools:
+            if tool_name not in READ_SCAN_TOOLS:
+                continue
+            if tool_name == "package.repo":
+                raw = arguments.get("repo_dir") or DEFAULT_SCAN_PATHS.get(tool_name)
+            else:
+                raw = arguments.get("path")
+            if not isinstance(raw, str) or not raw or not SecurityGuard.is_safe_scan_path(raw):
+                return "medium"
+        return "low"
 
     def _confirmation_waived_by_preview(self, tools: list[str], arguments: dict[str, Any]) -> bool:
         """A dry-run ``temp.clean`` preview over a safe temp dir has no side
@@ -408,3 +429,11 @@ class SecurityGuard:
         if not normalized.startswith("/") or ".." in parts:
             return False
         return any(normalized == safe or normalized.startswith(safe + "/") for safe in SAFE_TEMP_DIRS)
+
+    @staticmethod
+    def is_safe_scan_path(path: str) -> bool:
+        normalized = SecurityGuard._normalize_posix_path(path)
+        parts = PurePosixPath(normalized).parts
+        if not normalized.startswith("/") or ".." in parts:
+            return False
+        return any(normalized == safe or normalized.startswith(safe + "/") for safe in SAFE_SCAN_DIRS)

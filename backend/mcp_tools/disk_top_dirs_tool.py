@@ -3,6 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+# 单次扫描访问的目录项预算上限，超过即停止遍历并在结果中置 budget_exceeded，
+# 避免低权限只读扫描长时间遍历整机文件系统（DoS 防护）。
+_MAX_SCAN_ENTRIES = 20000
+
 
 def run(arguments: dict[str, Any]) -> dict[str, Any]:
     root = Path(str(arguments.get("path", "."))).expanduser().resolve()
@@ -16,6 +20,8 @@ def run(arguments: dict[str, Any]) -> dict[str, Any]:
     include_files = bool(arguments.get("include_files", False))
     skipped: list[dict[str, str]] = []
     entries: list[dict[str, Any]] = []
+    visited = [0]
+    budget_exceeded = False
 
     try:
         children = list(root.iterdir())
@@ -23,11 +29,15 @@ def run(arguments: dict[str, Any]) -> dict[str, Any]:
         return {"error": str(exc)}
 
     for child in children:
+        visited[0] += 1
+        if visited[0] > _MAX_SCAN_ENTRIES:
+            budget_exceeded = True
+            break
         if child.is_symlink():
             skipped.append({"path": str(child), "reason": "symlink skipped"})
             continue
         if child.is_dir():
-            size_bytes, file_count = _measure_tree(child, max_depth=max_depth, skipped=skipped)
+            size_bytes, file_count = _measure_tree(child, max_depth=max_depth, skipped=skipped, visited=visited)
             entries.append(
                 {
                     "path": str(child),
@@ -37,6 +47,9 @@ def run(arguments: dict[str, Any]) -> dict[str, Any]:
                     "file_count": file_count,
                 }
             )
+            if visited[0] > _MAX_SCAN_ENTRIES:
+                budget_exceeded = True
+                break
             continue
         if include_files and child.is_file():
             try:
@@ -64,20 +77,22 @@ def run(arguments: dict[str, Any]) -> dict[str, Any]:
         "top_entries": top_entries,
         "skipped_count": len(skipped),
         "skipped_sample": skipped[:10],
+        "budget_exceeded": budget_exceeded,
         "analysis": {
             "entry_count": len(top_entries),
             "largest_entry_mb": top_entries[0]["size_mb"] if top_entries else 0,
             "total_reported_size_mb": _bytes_to_mb(sum(item["size_bytes"] for item in top_entries)),
+            "budget_exceeded": budget_exceeded,
             "read_only": True,
         },
     }
 
 
-def _measure_tree(root: Path, *, max_depth: int, skipped: list[dict[str, str]]) -> tuple[int, int]:
+def _measure_tree(root: Path, *, max_depth: int, skipped: list[dict[str, str]], visited: list[int]) -> tuple[int, int]:
     total_size = 0
     file_count = 0
     stack: list[tuple[Path, int]] = [(root, 0)]
-    while stack:
+    while stack and visited[0] <= _MAX_SCAN_ENTRIES:
         current, depth = stack.pop()
         try:
             children = list(current.iterdir())
@@ -85,6 +100,9 @@ def _measure_tree(root: Path, *, max_depth: int, skipped: list[dict[str, str]]) 
             skipped.append({"path": str(current), "reason": str(exc)})
             continue
         for child in children:
+            visited[0] += 1
+            if visited[0] > _MAX_SCAN_ENTRIES:
+                break
             if child.is_symlink():
                 skipped.append({"path": str(child), "reason": "symlink skipped"})
                 continue

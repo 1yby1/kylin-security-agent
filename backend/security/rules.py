@@ -26,6 +26,25 @@ HIGH_RISK_TOOLS = {"config.modify", "permission.modify", "user.modify", "service
 APPROVAL_ROLES = {"operator", "admin"}
 ADMIN_ROLES = {"admin"}
 
+# 只读扫描工具：默认仍是低风险工具（在 LOW_RISK_TOOLS 内），但 guard 会根据其
+# 目标路径动态评级——路径在 SAFE_SCAN_DIRS 白名单内时维持 low（viewer 可用），
+# 否则升级为 medium（需 operator/admin + 二次确认），避免低权限用户递归扫描任意
+# 路径造成信息泄露或 DoS。
+READ_SCAN_TOOLS = {"disk.large_files", "disk.top_dirs", "package.repo"}
+
+SAFE_SCAN_DIRS = (
+    "/var/log",
+    "/tmp",
+    "/var/tmp",
+    "/opt/software-cup-ops",
+    "/etc/yum.repos.d",
+)
+
+# 缺省目标：仅当某工具未显式给出路径时，guard 用此默认值参与白名单判定。
+# package.repo 默认读取 /etc/yum.repos.d（白名单内），磁盘扫描工具无安全默认值，
+# 缺省即视为白名单外（升级为 medium）。
+DEFAULT_SCAN_PATHS = {"package.repo": "/etc/yum.repos.d"}
+
 SAFE_TEMP_DIRS = (
     "/tmp",
     "/var/tmp",
