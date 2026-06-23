@@ -144,6 +144,6 @@ def get_rate_limit_settings() -> RateLimitSettings:
         max_concurrent = 8
     return RateLimitSettings(
         enabled=enabled,
-        per_minute=max(1, per_minute),
-        max_concurrent=max(1, max_concurrent),
+        per_minute=max(1, min(per_minute, 100000)),
+        max_concurrent=max(1, min(max_concurrent, 4096)),
     )

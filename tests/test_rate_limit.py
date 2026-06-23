@@ -37,6 +37,12 @@ class RateLimiterTest(unittest.TestCase):
         self.assertFalse(limiter.allow("k"))
         self.assertGreater(limiter.retry_after("k"), 0)
 
+    def test_bounds_distinct_key_memory(self):
+        limiter = RateLimiter(limit_per_window=5, window_seconds=60, max_keys=3, clock=lambda: 0.0)
+        for i in range(50):
+            limiter.allow(f"ip:{i}")
+        self.assertLessEqual(len(limiter._hits), 3)
+
 
 class ConcurrencyGateTest(unittest.TestCase):
     def test_blocks_when_full_and_recovers(self):
@@ -75,6 +81,12 @@ class RateLimitSettingsTest(unittest.TestCase):
             self.assertFalse(settings.enabled)
             self.assertEqual(settings.per_minute, 5)
             self.assertEqual(settings.max_concurrent, 2)
+
+    def test_upper_clamp(self):
+        with mock.patch.dict(os.environ, {"AGENT_RATE_LIMIT_PER_MIN": "999999999", "AGENT_MAX_CONCURRENT": "999999999"}, clear=True):
+            settings = get_rate_limit_settings()
+            self.assertEqual(settings.per_minute, 100000)
+            self.assertEqual(settings.max_concurrent, 4096)
 
 
 if __name__ == "__main__":

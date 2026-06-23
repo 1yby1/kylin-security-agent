@@ -16,11 +16,13 @@ class RateLimiter:
         limit_per_window: int,
         window_seconds: float = 60.0,
         clock: Callable[[], float] | None = None,
+        max_keys: int = 10000,
     ) -> None:
         self._limit = max(1, int(limit_per_window))
         self._window = float(window_seconds)
         self._clock = clock or time.monotonic
         self._hits: dict[str, deque[float]] = {}
+        self._max_keys = max(1, int(max_keys))
         self._lock = threading.RLock()
 
     def allow(self, key: str) -> bool:
@@ -31,6 +33,8 @@ class RateLimiter:
             if len(bucket) >= self._limit:
                 return False
             bucket.append(now)
+            if len(self._hits) > self._max_keys:
+                self._sweep(now)
             return True
 
     def retry_after(self, key: str) -> int:
@@ -48,6 +52,23 @@ class RateLimiter:
         cutoff = now - self._window
         while bucket and bucket[0] <= cutoff:
             bucket.popleft()
+
+    def _sweep(self, now: float) -> None:
+        """Trim empty buckets, then evict oldest keys if still over capacity."""
+        # Trim all buckets first
+        for bucket in self._hits.values():
+            self._trim(bucket, now)
+        # Delete empty buckets
+        empty_keys = [k for k, v in self._hits.items() if not v]
+        for k in empty_keys:
+            del self._hits[k]
+        # If still over capacity, evict by oldest most-recent timestamp
+        if len(self._hits) > self._max_keys:
+            # Sort by most-recent timestamp (bucket[-1]) ascending
+            sorted_keys = sorted(self._hits.items(), key=lambda item: item[1][-1])
+            while len(self._hits) > self._max_keys:
+                k, _ = sorted_keys.pop(0)
+                del self._hits[k]
 
 
 class ConcurrencyGate:
