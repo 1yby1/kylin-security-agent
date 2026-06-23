@@ -9,6 +9,7 @@ from typing import Any
 
 from backend.agent.prompt import ANALYSIS_SYSTEM_PROMPT, PLANNING_SYSTEM_PROMPT
 from backend.config import LLMSettings, get_llm_settings
+from backend.security.sanitizer import build_observation_block
 
 
 @dataclass(frozen=True)
@@ -110,7 +111,7 @@ class LLMClient:
                 "query": query,
                 "plan": plan,
                 "security": security,
-                "tool_result": tool_result,
+                "observed_data": build_observation_block(tool_result),
             },
         )
         data = self._parse_json(content or "")
