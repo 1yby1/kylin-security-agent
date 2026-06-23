@@ -17,6 +17,20 @@ Tools are registered through `backend/mcp_tools/builtin.py`; see
 | `log` | `backend/mcp_tools/log_tool.py` | Recent journal or file log inspection and keyword counts | `journalctl` |
 | `service` | `backend/mcp_tools/service_tool.py` | Service list/status and state counts | `systemctl` |
 
+## Security Posture Tools
+
+Three additional read-only security perception tools (`category="security"`)
+ship alongside the tools above and are also registered through
+`backend/mcp_tools/builtin.py`. They are all listed in `LOW_RISK_TOOLS`, so the
+multi-step reasoning loop can call them automatically. Full field-level
+documentation lives in `docs/security-posture-tools.md`.
+
+| Tool | File | One-line purpose |
+| --- | --- | --- |
+| `auth` | `backend/mcp_tools/auth_tool.py` | 登录认证审计：成功/失败登录、当前会话、暴力破解迹象，见 `docs/security-posture-tools.md` |
+| `firewall` | `backend/mcp_tools/firewall_tool.py` | 防火墙暴露面：firewalld 运行状态与开放端口/服务，见 `docs/security-posture-tools.md` |
+| `privilege` | `backend/mcp_tools/privilege_tool.py` | 提权风险扫描：特权目录 SUID/SGID、UID 0 账户、空密码账户，见 `docs/security-posture-tools.md` |
+
 ## API
 
 List tools:
