@@ -44,17 +44,32 @@
 - `check_disk(disk_output, threshold_percent) -> list[Alert]`：磁盘使用率超过阈值（默认 90）→ critical。
 - `check_service(service_output) -> list[Alert]`：`analysis.failed_count > 0` → warning（附 failed 数）。
 - `check_auth(auth_output, threshold) -> list[Alert]`：`analysis.failed_login_count > threshold`（默认 20）→ warning。
+  - ⚠️ 关键约束：`auth_tool` 只统计它读到的 `lines` 行（默认 20、上限 200），`failed_login_count`
+    至多等于读取行数。若读取行数 ≤ 阈值，`> threshold` 永远无法触发。故巡检调用 auth 时必须传
+    `{"lines": settings.auth_lines}`，且 `get_monitor_settings()` 保证 `auth_lines >= 阈值 + 1`
+    （并受 auth 的 200 上限约束）。
 - `run_all_checks(outputs: dict[str, dict], thresholds) -> list[Alert]`：按工具名分发到各检查并汇总。
 
 > 各工具输出的确切字段名（如 `disk` 工具的使用率字段、`service`/`auth` 的 `analysis` 键）在
 > writing-plans 阶段读工具源码核定；检查对缺失/异常字段做空值兜底，不因单项异常整体失败。
 
 ### 3.3 `scheduler.py` — 后台巡检调度
-- `MonitorScheduler(registry, alert_store, settings, audit, clock=None)`：
-  - `run_once() -> list[Alert]`：对固定只读工具子集（`system`/`disk`/`service`/`auth`，全部 ∈
-    `LOW_RISK_TOOLS`）逐个 `registry.call(tool, {})` 采数 → `run_all_checks` 判定 → 命中告警
-    `alert_store.add(...)` + 写审计（stage `monitor_alert`）→ 返回本轮告警。单个工具调用异常被
-    捕获、记 skip、不影响其余检查。可独立调用（不依赖定时器），便于测试。
+- `MonitorScheduler(executor, alert_store, settings, audit, clock=None)`：接收 `ToolExecutor`
+  （**不是** `ToolRegistry`），让巡检的工具调用复用 executor 既有的安全 guard 校验与 metrics
+  打点路径，而不是绕过它们直调 registry。
+  - `run_once() -> list[Alert]`：对固定只读检查工具逐个用
+    `executor.execute(Plan(intent="inspection", tools=[tool], arguments=args), user_id="monitor", raw_query="monitor", role="admin")`
+    采数（每个工具一个单工具 Plan，带各自参数），取 `execution.result.get(tool, {})` 汇总成
+    `outputs` → `run_all_checks(outputs, thresholds)` 判定 → 命中告警 `alert_store.add(...)` +
+    写审计（stage `monitor_alert`）→ 返回本轮告警。固定检查工具与参数：
+    - `disk` → `{"path": "/"}`
+    - `service` → `{}`
+    - `auth` → `{"lines": settings.auth_lines}`
+
+    三者全部 ∈ `LOW_RISK_TOOLS`、只读。`role="admin"` 是可信内部系统主体（巡检由系统发起，
+    非用户请求），保证只读工具过 guard；`user_id="monitor"` 用于审计归属。每个 `execute` 调用
+    用 try/except 隔离，单个工具异常被捕获、记 skip、不影响其余检查。`run_once` 为每轮生成一个
+    `trace_id` 串联审计。可独立调用（不依赖定时器），便于测试。
   - `start()`：若已运行则忽略；否则启动 daemon 线程，循环 `run_once()` 后 `Event.wait(interval)`；
     `run_once` 抛错只记录不退出循环。
   - `stop()`：set event + join（带超时）。
@@ -63,7 +78,7 @@
 
 ## 4. 调度接入（`backend/main.py` lifespan）
 
-现有 `lifespan` 中，`init_db()` 之后：构造 `MonitorScheduler`（用模块级 `executor._registry`、
+现有 `lifespan` 中，`init_db()` 之后：构造 `MonitorScheduler`（用模块级 `executor`（`ToolExecutor`）、
 新的 `AlertStore` 单例、`get_monitor_settings()`、`AuditLogger`）。若 `settings.enabled` 则
 `scheduler.start()`；`yield` 之后 `scheduler.stop()`（放在 `finally`/`async with` 退出后，保证优雅停）。
 
@@ -81,14 +96,19 @@
 | `AGENT_MONITOR_ENABLED` | `false` | 是否启用后台巡检 |
 | `AGENT_MONITOR_INTERVAL_SECONDS` | `300` | 巡检间隔（clamp `[10, 86400]`） |
 | `AGENT_MONITOR_DISK_PERCENT` | `90` | 磁盘使用率告警阈值（clamp `[1, 100]`） |
-| `AGENT_MONITOR_FAILED_LOGIN` | `20` | 失败登录数告警阈值（clamp `[1, 100000]`） |
+| `AGENT_MONITOR_FAILED_LOGIN` | `20` | 失败登录数告警阈值（clamp `[1, 199]`，须小于 auth 200 行上限以便能触发） |
+| `AGENT_MONITOR_AUTH_LINES` | `100` | 巡检调用 `auth` 时读取的行数；clamp `[1, 200]` |
 
-`MonitorSettings`（frozen dataclass）承载上述值。
+`MonitorSettings`（frozen dataclass）承载上述值。`get_monitor_settings()` 在 clamp 后强制
+`auth_lines = max(auth_lines, failed_login_threshold + 1)`（再对 200 上限取 min），确保
+"读取行数 > 阈值"恒成立，否则失败登录告警永远不会触发（见 §3.2 关键约束）。
 
 ## 7. 关键不变量
 
-- **巡检只运行只读工具，绝不触发操作类工具或自动修复**——固定只读子集，与"多步闭环只自动跑
-  只读工具"同一红线，保证无自主状态变更。
+- **巡检只运行只读工具，绝不触发操作类工具或自动修复**——固定只读子集（`disk`/`service`/`auth`），
+  与"多步闭环只自动跑只读工具"同一红线，保证无自主状态变更。
+- **巡检经 `ToolExecutor.execute` 执行，不绕过安全 guard 与 metrics**——巡检的工具调用与用户
+  请求走同一条 executor 路径，复用安全校验与工具耗时打点，而不是直调 `registry.call`。
 - 告警判定是确定性规则，不依赖 LLM；`run_once` 不调用 LLM、无 token 成本。
 - 后台线程 tick 出错只记录不杀循环；不重叠执行；lifespan 退出时优雅停。
 - 告警存储进程内内存态、重启清零；不持久化、多副本不汇总（如需长期趋势接外部系统）。
@@ -99,8 +119,11 @@
 
 - `checks`：各检查命中/不命中（用工具样本 dict）、缺失字段兜底不崩溃、`run_all_checks` 汇总。
 - `AlertStore`：`add`/`recent` 顺序、`max_alerts` 上限淘汰、TTL 过期清理（注入 clock）。
-- `MonitorScheduler.run_once`：注入 fake registry 返回越阈值样本 → 产出对应告警并入库；注入只含
-  操作类工具时不会被调用（只读子集固定）；单工具异常被吞、其余检查照常。
+- `MonitorScheduler.run_once`：注入 fake executor（`execute` 返回越阈值样本 result）→ 产出对应
+  告警并入库；断言 executor 收到的都是固定只读工具的单工具 Plan（disk/service/auth，含正确参数
+  如 `auth` 的 `lines`），不含操作类工具；单工具 `execute` 异常被吞、其余检查照常。
+- `get_monitor_settings`：默认值、clamp、以及 `auth_lines >= failed_login_threshold + 1` 强制
+  关系（设小 auth_lines + 大阈值时 auth_lines 被抬高）。
 - `MonitorScheduler.start/stop`：start 后 running=True、stop 后线程结束（可用极短 interval +
   注入 clock 或直接断言线程生命周期，不依赖真实计时）。
 - `/api/alerts`：viewer/无令牌 `403`，operator 返回 `alerts` 列表。
