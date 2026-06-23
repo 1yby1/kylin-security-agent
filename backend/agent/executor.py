@@ -8,6 +8,7 @@ from backend.agent.planner import Plan, PlanStep
 from backend.audit.logger import AuditLogger
 from backend.mcp_tools import ToolRegistry, build_registry
 from backend.security.guard import SecurityGuard
+from backend.security.redaction import redact_security_tool_output
 
 
 RISK_ORDER = {"low": 1, "medium": 2, "high": 3, "prohibited": 4}
@@ -97,6 +98,7 @@ class ToolExecutor:
                     plan, user_id, raw_query, step_securities, step_records,
                     executed_commands, result_by_tool, blocked_step=step.id,
                     approved_required=False, message=resolve_error, status="blocked",
+                    role=role,
                 )
 
             resolved = self._coerce_arguments(step.tool, resolved)
@@ -127,6 +129,7 @@ class ToolExecutor:
                     executed_commands, result_by_tool, blocked_step=step.id,
                     approved_required=safety.confirmation_required and not approved,
                     message=safety.reason or "security validation failed", status=status,
+                    role=role,
                 )
 
             if trace_id:
@@ -176,7 +179,7 @@ class ToolExecutor:
                     approved_required=False,
                     blocked=False,
                     message=message,
-                    result=result_by_tool,
+                    result=self._redact_results(result_by_tool, role),
                     security=aggregate,
                     executed_commands=executed_commands,
                     steps=step_records,
@@ -194,13 +197,26 @@ class ToolExecutor:
             approved_required=False,
             blocked=False,
             message="Execution completed.",
-            result=result_by_tool,
+            result=self._redact_results(result_by_tool, role),
             security=aggregate,
             executed_commands=executed_commands,
             steps=step_records,
         )
 
     # -- security helpers -------------------------------------------------
+
+    def _redact_results(self, result_by_tool: dict[str, Any], role: str | None) -> dict[str, Any]:
+        """Apply role-based redaction to the tool results returned to the caller.
+
+        ``result_by_tool`` keys are tool names, with ``tool#2`` etc. for repeated
+        tools; strip the ``#N`` suffix to look up the redaction policy. The
+        original ``result_by_tool`` (used for audit) and step ``outputs`` (used
+        for reference resolution) stay full — only the returned copy is redacted.
+        """
+        return {
+            key: redact_security_tool_output(key.split("#")[0], value, role)
+            for key, value in result_by_tool.items()
+        }
 
     def _check_step(self, tool: str, arguments: dict[str, Any], raw_query: str, user_id: str, approved: bool, role: str | None) -> dict[str, Any]:
         security = self._guard.check(
@@ -228,6 +244,7 @@ class ToolExecutor:
         approved_required: bool,
         message: str,
         status: str,
+        role: str | None = None,
     ) -> ExecutionResult:
         aggregate = self._aggregate_security(step_securities, blocked_step=blocked_step)
         self._audit.write(
@@ -241,7 +258,7 @@ class ToolExecutor:
             approved_required=approved_required,
             blocked=True,
             message=message,
-            result=result_by_tool,
+            result=self._redact_results(result_by_tool, role),
             security=aggregate,
             executed_commands=executed_commands,
             steps=step_records,
