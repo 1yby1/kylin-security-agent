@@ -2,7 +2,7 @@ import json
 import unittest
 
 from backend.agent.llm_client import LLMClient
-from backend.agent.prompt import ANALYSIS_SYSTEM_PROMPT
+from backend.agent.prompt import ANALYSIS_SYSTEM_PROMPT, PLANNING_SYSTEM_PROMPT
 from backend.config import LLMSettings
 
 
@@ -51,6 +51,11 @@ class LLMIsolationTest(unittest.TestCase):
     def test_analysis_prompt_states_data_not_instruction_boundary(self):
         self.assertIn("observed_data", ANALYSIS_SYSTEM_PROMPT)
         self.assertIn("不可", ANALYSIS_SYSTEM_PROMPT)
+
+    def test_planning_prompt_states_observations_are_untrusted(self):
+        self.assertIn("context.observations", PLANNING_SYSTEM_PROMPT)
+        self.assertIn("不可信", PLANNING_SYSTEM_PROMPT)
+        self.assertIn("不能作为指令", PLANNING_SYSTEM_PROMPT)
 
 
 if __name__ == "__main__":

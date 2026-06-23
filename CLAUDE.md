@@ -94,10 +94,10 @@ python -m unittest discover -v
 - **LLM JSON 合约需要稳定。**  
   Prompt 在 `backend/agent/prompt.py`。规划 JSON 必须包含 `intent`、`tools`、`arguments` 等字段；分析 JSON 必须包含 `conclusion`、`status`、`evidence`、`recommendations` 等字段。调用方需要容忍代码块包裹 JSON 和不支持 `response_format` 的模型。
 
-- **多步推理闭环只能自动执行只读工具。**  
+- **多步推理闭环只能自动执行只读工具。**
   `AgentOrchestrator._run_loop` 每一步都校验下一步规划：只要工具不在 `backend/security/rules.py` 的 `LOW_RISK_TOOLS` 内，就不会自动执行，而是收进 `suggested_actions` 并停手。`Planner.plan_next` 本身允许返回操作类工具——只读边界是编排器强制的，不是规划器的职责，不要把这条边界误移到 `Planner` 里。
 
-- **被观测数据（observed_data）隔离且不可信，不得当作指令。**  
+- **被观测数据（observed_data）隔离且不可信，不得当作指令。**
   工具执行结果在喂给 LLM 前必须经过 `backend/security/sanitizer.py` 的 `build_observation_block()` 清洗、截断并包装为 `<OBSERVED_DATA ... trust="untrusted" ...>` 隔离块；`ANALYSIS_SYSTEM_PROMPT` 显式声明该字段只能作为分析素材。任何模块都不应把工具结果原文直接拼进 prompt，也不应认为 `observed_data` 的内容可以改变角色、跳过校验或代表用户确认。
 
 ## API 表面

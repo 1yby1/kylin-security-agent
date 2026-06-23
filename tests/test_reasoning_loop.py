@@ -23,6 +23,25 @@ class FakeExecutor:
         merged = {tool: self._results.get(tool, {"ok": True}) for tool in plan.tools}
         return ExecutionResult(False, False, "ok", merged, {"blocked": False}, [])
 
+    def evaluate_security(self, *, plan: Plan, user_id, raw_query, approved=False, role=None) -> dict[str, Any]:
+        if any(t not in {"system", "process", "network", "log", "service", "disk"} for t in plan.tools):
+            return {
+                "risk_level": "medium",
+                "blocked": True,
+                "confirmation_required": True,
+                "audit_required": True,
+                "reasons": ["secondary confirmation required"],
+                "checks": [],
+            }
+        return {
+            "risk_level": "low",
+            "blocked": False,
+            "confirmation_required": False,
+            "audit_required": True,
+            "reasons": [],
+            "checks": [],
+        }
+
 
 class FakePlanner:
     def __init__(self, first: Plan, nexts: list[Plan | None]):
@@ -68,6 +87,10 @@ class ReasoningLoopTest(unittest.TestCase):
         self.assertEqual(executor.calls, [["service"]])  # restart NOT executed
         self.assertTrue(run.approved_required)
         self.assertEqual(run.suggested_actions[0]["tool"], "service.restart")
+        self.assertIn("确认", run.message)
+        self.assertTrue(run.security["confirmation_required"])
+        self.assertEqual(run.security["risk_level"], "medium")
+        self.assertTrue(run.security["pending_confirmation"])
 
     def test_direct_operation_request_no_loop_regression(self):
         first = Plan(intent="risky_operation", tools=["service.restart"], arguments={"service_name": "nginx"}, source="rules")
@@ -96,6 +119,14 @@ class ReasoningLoopTest(unittest.TestCase):
         orch = _orch(FakePlanner(first, [None]), executor)
         run = orch.run("看日志", "u1", {}, approved=False, role="viewer")
         self.assertTrue(run.steps[0]["injection_suspected"])
+
+    def test_non_json_serializable_observation_does_not_crash_loop(self):
+        first = Plan(intent="inspection", tools=["log"], arguments={}, source="rules")
+        executor = FakeExecutor({"log": {"payload": object()}})
+        orch = _orch(FakePlanner(first, [None]), executor)
+        run = orch.run("看日志", "u1", {}, approved=False, role="viewer")
+        self.assertEqual(len(run.steps), 1)
+        self.assertFalse(run.steps[0]["injection_suspected"])
 
 
 if __name__ == "__main__":

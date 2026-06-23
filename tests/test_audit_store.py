@@ -59,6 +59,12 @@ class AuditStoreTests(unittest.TestCase):
         self.assertEqual(rows[0]["data"], {"a": 1})
         self.assertIn("hash", rows[0])
 
+    def test_append_tolerates_non_json_serializable_data(self):
+        self.store.append(_event(data={"payload": object()}))
+        rows = self.store.read_recent(limit=10)
+        self.assertEqual(len(rows), 1)
+        self.assertIsInstance(rows[0]["data"]["payload"], str)
+
     def test_read_recent_filters_trace_and_orders_oldest_first(self):
         self.store.append(_event(trace_id="A", data={"n": 1}))
         self.store.append(_event(trace_id="B", data={"n": 2}))

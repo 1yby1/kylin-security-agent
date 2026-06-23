@@ -123,6 +123,7 @@ class AgentOrchestrator:
         steps: list[dict[str, Any]] = []
         suggested: list[dict[str, Any]] = []
         last_security: dict[str, Any] = {}
+        pending_security: dict[str, Any] | None = None
         message = "执行完成。"
         blocked = False
         current = first_plan
@@ -136,7 +137,7 @@ class AgentOrchestrator:
             combined.update(execution.result)
             commands.extend(execution.executed_commands)
             executed.update(current.tools)
-            hits = scan_injection(json.dumps(execution.result, ensure_ascii=False))
+            hits = scan_injection(json.dumps(execution.result, ensure_ascii=False, default=str))
             if hits:
                 self._audit.event(
                     trace_id=trace_id, stage="injection_scan", user_id=user_id,
@@ -166,14 +167,17 @@ class AgentOrchestrator:
             if operation_tools:
                 for tool in operation_tools:
                     suggested.append({"tool": tool, "arguments": next_plan.arguments, "reason": next_plan.summary})
+                pending_security = self._pending_action_security(next_plan, query, user_id, role, suggested)
+                message = "已完成只读诊断，建议操作需要确认后才能执行。"
                 self._audit.event(
                     trace_id=trace_id, stage="suggested_action", user_id=user_id,
-                    status="pending_confirmation", data={"suggested_actions": suggested},
+                    status="pending_confirmation", data={"suggested_actions": suggested, "security": pending_security},
                 )
                 break
             current = next_plan
 
-        conclusion = self._conclude(query, first_plan, last_security, combined, blocked)
+        final_security = pending_security or last_security
+        conclusion = self._conclude(query, first_plan, final_security, combined, blocked)
         self._audit.event(
             trace_id=trace_id, stage="final_answer", user_id=user_id,
             status=conclusion.get("status", "unknown"),
@@ -183,14 +187,53 @@ class AgentOrchestrator:
             trace_id=trace_id, stage="trace_complete", user_id=user_id,
             status="blocked" if blocked else "completed",
             data={"query": query, "plan": first_plan_data, "steps": steps,
-                  "suggested_actions": suggested, "final_answer": conclusion},
+                  "suggested_actions": suggested, "security": final_security, "final_answer": conclusion},
         )
         return AgentRunResult(
             trace_id=trace_id, intent=first_plan.intent, tools=sorted(executed),
             approved_required=bool(suggested), blocked=blocked, message=message,
-            result=combined, security=last_security, executed_commands=commands,
+            result=combined, security=final_security, executed_commands=commands,
             conclusion=conclusion, plan=first_plan_data, steps=steps, suggested_actions=suggested,
         )
+
+    def _pending_action_security(
+        self,
+        plan: Plan,
+        query: str,
+        user_id: str,
+        role: str | None,
+        suggested_actions: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        try:
+            evaluated = self._executor.evaluate_security(
+                plan=plan,
+                user_id=user_id,
+                raw_query=query,
+                approved=False,
+                role=role,
+            )
+        except Exception as exc:  # pragma: no cover - defensive fallback for custom executors
+            evaluated = {
+                "risk_level": "medium",
+                "blocked": False,
+                "confirmation_required": True,
+                "audit_required": True,
+                "reasons": [f"suggested action security evaluation failed: {exc}"],
+                "checks": [],
+            }
+        reasons = [
+            *evaluated.get("reasons", []),
+            "suggested action requires explicit confirmation before execution",
+        ]
+        return {
+            **evaluated,
+            "blocked": False,
+            "confirmation_required": True,
+            "pending_confirmation": True,
+            "reasons": list(dict.fromkeys(str(reason) for reason in reasons)),
+            "suggested_actions": suggested_actions,
+            "suggested_action_security": evaluated,
+        }
 
     @staticmethod
     def _summarize_observation(result: dict[str, Any]) -> str:

@@ -71,7 +71,7 @@ class AuditStore:
         stage = event["stage"]
         user_id = event.get("user_id")
         status = event.get("status")
-        data_json = json.dumps(event.get("data", {}), sort_keys=True, ensure_ascii=False)
+        data_json = json.dumps(event.get("data", {}), sort_keys=True, ensure_ascii=False, default=str)
         with self._lock:
             self._conn.execute("BEGIN IMMEDIATE")
             try:
