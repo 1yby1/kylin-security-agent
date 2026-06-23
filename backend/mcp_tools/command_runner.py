@@ -53,6 +53,8 @@ COMMAND_TEMPLATES: dict[str, dict[str, list[str]]] = {
         "privilege.sgid": ["find", "/usr/bin", "/usr/sbin", "/bin", "/sbin", "/usr/local/bin", "-xdev", "-perm", "-2000", "-type", "f"],
         "privilege.uid0": ["awk", "-F:", "($3 == 0) {print $1}", "/etc/passwd"],
         "privilege.empty_password": ["awk", "-F:", "($2 == \"\") {print $1}", "/etc/shadow"],
+        "package.repolist.dnf": ["dnf", "repolist", "--enabled"],
+        "package.repolist.yum": ["yum", "repolist", "--enabled"],
     },
 }
 
