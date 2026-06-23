@@ -147,3 +147,35 @@ def get_rate_limit_settings() -> RateLimitSettings:
         per_minute=max(1, min(per_minute, 100000)),
         max_concurrent=max(1, min(max_concurrent, 4096)),
     )
+
+
+@dataclass(frozen=True)
+class MonitorSettings:
+    enabled: bool
+    interval_seconds: int
+    disk_percent: int
+    failed_login: int
+    auth_lines: int
+
+
+def get_monitor_settings() -> MonitorSettings:
+    def _int(name: str, default: int) -> int:
+        try:
+            return int(os.getenv(name, str(default)))
+        except ValueError:
+            return default
+
+    enabled = os.getenv("AGENT_MONITOR_ENABLED", "false").strip().lower() in {"1", "true", "yes"}
+    interval = max(10, min(_int("AGENT_MONITOR_INTERVAL_SECONDS", 300), 86400))
+    disk_percent = max(1, min(_int("AGENT_MONITOR_DISK_PERCENT", 90), 100))
+    failed_login = max(1, min(_int("AGENT_MONITOR_FAILED_LOGIN", 20), 199))
+    auth_lines = max(1, min(_int("AGENT_MONITOR_AUTH_LINES", 100), 200))
+    # 保证读取行数 > 阈值，否则 failed_login_count > threshold 永远无法触发。
+    auth_lines = min(200, max(auth_lines, failed_login + 1))
+    return MonitorSettings(
+        enabled=enabled,
+        interval_seconds=interval,
+        disk_percent=disk_percent,
+        failed_login=failed_login,
+        auth_lines=auth_lines,
+    )
