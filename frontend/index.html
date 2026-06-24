@@ -275,6 +275,92 @@
           </section>
         </section>
 
+        <!-- Metrics -->
+        <section v-if="page === 'metrics'" class="page">
+          <div class="actions right">
+            <button class="ghost" @click="loadMetrics" :disabled="metricsLoading">
+              <svg class="icon" aria-hidden="true" style="width:14px;height:14px"><use href="#icon-refresh" /></svg>
+              {{ metricsLoading ? "刷新中" : "刷新指标" }}
+            </button>
+          </div>
+          <article class="panel" v-if="metricsError">
+            <p class="empty-state">{{ metricsError }}</p>
+          </article>
+          <template v-else-if="metrics.tools !== undefined">
+            <section class="summary-grid">
+              <article class="metric"><span class="metric-label">总请求数</span><span class="big-number">{{ totalRequests }}</span></article>
+              <article class="metric"><span class="metric-label">安全拦截</span><span class="big-number">{{ metrics.blocked ?? 0 }}</span></article>
+              <article class="metric"><span class="metric-label">限流</span><span class="big-number">{{ metrics.rate_limited ?? 0 }}</span></article>
+              <article class="metric"><span class="metric-label">并发拒绝</span><span class="big-number">{{ metrics.concurrency_rejected ?? 0 }}</span></article>
+            </section>
+            <article class="panel">
+              <header class="panel-header"><h2>LLM 调用</h2><span class="eyebrow">LLM</span></header>
+              <dl class="kv">
+                <dt>成功</dt><dd>{{ metrics.llm?.success ?? 0 }}</dd>
+                <dt>失败</dt><dd>{{ metrics.llm?.failure ?? 0 }}</dd>
+                <dt>成功率</dt><dd>{{ metrics.llm?.success_rate == null ? "—" : (metrics.llm.success_rate * 100).toFixed(1) + "%" }}</dd>
+              </dl>
+            </article>
+            <article class="panel">
+              <header class="panel-header"><h2>工具耗时</h2><span class="eyebrow">P50 / P95 (ms)</span></header>
+              <div class="bar-row" v-for="(tool, name) in metrics.tools" :key="name">
+                <span class="bar-label">{{ name }}</span>
+                <div class="bar-track"><div class="bar-fill" :style="{ width: barWidth(tool.p95_ms, metricsMaxP95) + '%' }"></div></div>
+                <span class="bar-value">{{ tool.count }}× · p50 {{ tool.p50_ms ?? "—" }} · p95 {{ tool.p95_ms ?? "—" }}</span>
+              </div>
+              <p v-if="!Object.keys(metrics.tools).length" class="empty-state">暂无工具调用记录</p>
+            </article>
+            <article class="panel">
+              <header class="panel-header"><h2>端点请求</h2><span class="eyebrow">Requests</span></header>
+              <dl class="kv">
+                <template v-for="(count, ep) in metrics.requests" :key="ep"><dt>{{ ep }}</dt><dd>{{ count }}</dd></template>
+              </dl>
+              <p v-if="!Object.keys(metrics.requests || {}).length" class="empty-state">暂无请求</p>
+            </article>
+          </template>
+          <article class="panel" v-else>
+            <p class="empty-state">点击"刷新指标"加载（需 operator/admin 令牌）。</p>
+          </article>
+        </section>
+
+        <!-- Monitor -->
+        <section v-if="page === 'monitor'" class="page">
+          <div class="actions right">
+            <button class="ghost" @click="loadMonitorStatus(); loadAlerts();" :disabled="alertsLoading || monitorLoading">
+              <svg class="icon" aria-hidden="true" style="width:14px;height:14px"><use href="#icon-refresh" /></svg>
+              {{ (alertsLoading || monitorLoading) ? "刷新中" : "刷新" }}
+            </button>
+          </div>
+          <article class="panel">
+            <header class="panel-header"><h2>巡检状态</h2><span class="eyebrow">Monitor</span></header>
+            <dl class="kv" v-if="monitorStatus.checks">
+              <dt>启用</dt><dd>{{ monitorStatus.enabled ? "是" : "否" }}</dd>
+              <dt>运行中</dt><dd>{{ monitorStatus.running ? "是" : "否" }}</dd>
+              <dt>间隔 (秒)</dt><dd>{{ monitorStatus.interval_seconds }}</dd>
+              <dt>上次巡检</dt><dd>{{ formatTime(monitorStatus.last_run_at) }}</dd>
+              <dt>上轮告警数</dt><dd>{{ monitorStatus.last_alert_count }}</dd>
+              <dt>检查项</dt><dd>{{ (monitorStatus.checks || []).join(" · ") }}</dd>
+            </dl>
+            <p v-else class="empty-state">加载中…</p>
+          </article>
+          <article class="panel">
+            <header class="panel-header"><h2>告警</h2><span class="eyebrow">Alerts · {{ alerts.length }}</span></header>
+            <p v-if="alertsError" class="empty-state">{{ alertsError }}</p>
+            <section v-else-if="alerts.length" class="alert-list">
+              <article v-for="(alert, idx) in alerts" :key="idx" class="alert-item" :class="`is-${alert.severity}`">
+                <header class="alert-head">
+                  <span class="pill" :class="alert.severity === 'critical' ? 'is-high' : 'is-medium'">{{ alert.severity }}</span>
+                  <span class="alert-source">{{ alert.source }}</span>
+                  <span class="muted">{{ formatTime(alert.timestamp, "—") }}</span>
+                </header>
+                <p class="alert-msg">{{ alert.message }}</p>
+                <p class="muted">{{ alert.metric }} = {{ alert.value }}（阈值 {{ alert.threshold }}）</p>
+              </article>
+            </section>
+            <p v-else class="empty-state">暂无告警（巡检未开启或一切正常）。</p>
+          </article>
+        </section>
+
         <!-- Tools -->
         <section v-if="page === 'tools'" class="page">
           <div class="actions right">
