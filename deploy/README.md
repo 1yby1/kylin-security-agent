@@ -49,6 +49,23 @@ sudo systemctl enable --now software-cup-ops
 sudo systemctl restart software-cup-ops
 ```
 
+如需启用 LLM 规划（未配置时 Planner 自动回退到本地关键词规则），编辑同一个
+`/etc/software-cup-ops/software-cup-ops.env`，取消 `install.sh` 预置的 LLM 占位
+行注释并填入密钥（二选一）：
+
+```bash
+LLM_PROVIDER=deepseek
+DEEPSEEK_API_KEY=...
+LLM_MODEL=deepseek-chat
+# 或
+LLM_PROVIDER=qwen
+QWEN_API_KEY=...
+LLM_MODEL=qwen-plus
+```
+
+保存后执行 `sudo systemctl restart software-cup-ops` 生效。注意 systemd 不读取
+shell 的 `export`，LLM 变量必须写进 `EnvironmentFile`。
+
 ## 麒麟高级服务器 V11 + LoongArch 注意事项
 
 - 优先使用操作系统提供的 Python 3 包，或使用 LoongArch 兼容的 Python 构建。
