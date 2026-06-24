@@ -47,9 +47,13 @@
   `process.kill`→`终止 {pid} 号进程`；`temp.clean`→`清理临时目录 {path}`；其它 →
   `执行 {tool}`（附参数）。
 - 勾选 `approved=true`，`page="chat"`，滚动/聚焦到输入框。**不自动发送**，由用户复核后点发送。
+- ⚠️ **`approved` 用完自动复位**：`submitChat()` 在 `finally`（成功或失败都）里把 `approved=false`
+  重置。否则用户执行完一次建议动作后，下一次普通查询仍带着二次确认状态，安全语义不干净——
+  二次确认必须是"每次显式勾选"，不能黏住。
 
-**(c) `detail_redacted` 徽标**：当 `chatResult.result` 任一工具结果含 `detail_redacted===true` 时，
-在结果区显示徽标"明细已按角色脱敏 · 需 operator 令牌查看全量"。
+**(c) `detail_redacted` 徽标**：当 `chatResult.result` 中**任意深度**存在 `detail_redacted===true`
+时，在结果区显示徽标"明细已按角色脱敏 · 需 operator 令牌查看全量"。判定用一个 `hasRedaction(obj)`
+**递归遍历**（深入 dict/list），而不是只看第一层——后端工具结果以后可能嵌套更深。
 
 ### 3.2 指标仪表盘（新页 `metrics`）
 
@@ -59,6 +63,10 @@
   （若存在）。
 - LLM 卡：`llm.success`/`failure`/`success_rate`。
 - 工具耗时表：每工具 `count` / `p50_ms` / `p95_ms`（用 CSS 条形按 p95 相对长度呈现）。
+  - ⚠️ **空值/0 值处理**：`p50_ms`/`p95_ms` 可能是 `null`，也可能所有工具都是 0 或根本没有工具记录。
+    条形宽度 = `maxP95 > 0 ? (p95 / maxP95 * 100) : 0`，其中 `maxP95` 取所有工具 `p95_ms` 的最大值
+    （`null` 视为 0）。`maxP95` 为 0/null 时所有条宽为 0，**不参与除法**，避免 `NaN%`。`null` 的
+    p50/p95 显示为"—"。
 - 端点请求表：`requests` 的 endpoint → count。
 - 刷新按钮。
 
@@ -73,23 +81,32 @@
 - `loadAlerts()` → `GET /api/alerts?limit=`（带令牌；`403` → 提示需 operator/admin）：告警列表，
   每条按 `severity`（critical 红 / warning 黄）配色，显示 `source`、`message`、`value` vs
   `threshold`、`timestamp`。
+- **时间戳格式化**：后端 `last_run_at` 与告警 `timestamp` 都是 Unix 秒级 `float`（`last_run_at`
+  可能为 `null`）。前端统一用一个 `formatTime(value)` helper：非空数值 →
+  `new Date(value * 1000).toLocaleString()`；为 `null`/空 → 显示"尚未运行"（status 用）或"—"（告警用）。
 - 刷新按钮；空告警时友好空态（"暂无告警" / "巡检未开启时无告警"）。
 
 ## 4. 改动文件
 
 | 文件 | 改动 |
 |---|---|
-| `frontend/app.js` | `navItems` 加 `metrics`/`monitor`；`data` 加 `metrics`/`alerts`/`monitorStatus`/loading 标志；方法 `loadMetrics`/`loadAlerts`/`loadMonitorStatus`/`applySuggestion`/`hasRedaction`；`switchPage` 分发；修 steps 相关（若有 helper 不匹配则调整） |
+| `frontend/app.js` | `api()` 改抛结构化错误对象 `{status, statusText, detail}`（并改现有 catch 读 `error.detail/statusText` 不再 `String(error)`）；`navItems` 加 `metrics`/`monitor`；`data` 加 `metrics`/`alerts`/`monitorStatus`/loading + `metricsError`/`alertsError`（403 提示态）；方法 `loadMetrics`/`loadAlerts`/`loadMonitorStatus`/`applySuggestion`/`hasRedaction`(递归)/`formatTime`/`barWidth`；`submitChat()` 在 `finally` 复位 `approved=false`；`switchPage` 分发；修 steps 渲染为闭环形状 |
 | `frontend/index.html` | chat 页：重写 steps 模板、加 suggested_actions 面板、加 redaction 徽标；新增 metrics 页、monitor 页模板；导航项图标 |
 | `frontend/styles.css` | 新增 KPI 卡、工具耗时条、告警条、suggested-action、redaction 徽标、注入告警标记的样式（沿用现有设计语言/变量） |
 
 ## 5. 数据流与错误处理
 
 - 所有请求复用现有 `api(path, options)`（自动带 `Authorization: Bearer <token>`）。
-- 受限端点（`/api/metrics`、`/api/alerts`）在无令牌/viewer 时返回 `403`：前端捕获并显示
-  "需 operator/admin 令牌"的友好提示，而不是把 `403` 当异常红字。需要把 `api()` 的非 2xx 处理
-  调整为：对受限页能区分 403 与其它错误（方案：受限加载方法里 `try/catch`，对 `403` 显示提示态）。
-- 其它网络错误沿用现有 `{ error: String(error) }` 兜底显示。
+- **`api()` 改为抛结构化错误对象**：现有 `api()` 在非 2xx 时 `throw new Error("403 Forbidden")`，
+  调用方只能解析字符串判 403，脆弱。改为 `throw { status, statusText, detail }`（`detail` 尽量取
+  响应体的 `detail` 字段，取不到则空串）。这样 metrics/alerts 等受限页可稳定用
+  `error.status === 403` 判定权限不足，无需解析字符串。
+- 受限端点（`/api/metrics`、`/api/alerts`）在无令牌/viewer 时返回 `403`：受限加载方法 `try/catch`
+  捕获，`error.status === 403` → 显示"需 operator/admin 令牌"的提示态（而非错误红字）。
+- 其它网络/非 403 错误沿用 `{ error: ... }` 兜底显示（`error.statusText || error.detail || String(error)`）。
+- ⚠️ `api()` 抛错形状从 `Error` 改为对象后，需检查现有调用方（chat/dashboard/tools/audit 的
+  `catch (error)` 里用了 `String(error)`）仍能正常显示——对对象 `String(error)` 会变成
+  `[object Object]`，故现有 catch 也要改成读 `error.detail/statusText/String(error)`。
 
 ## 6. 验证（agent-browser）
 
@@ -99,6 +116,21 @@
 2. metrics：填 operator 令牌，看 KPI/工具耗时/LLM 成功率渲染；不填令牌看 403 提示态。
 3. monitor：看状态卡 + 告警列表（可先用 viewer 看 status，再用 operator 看 alerts）。
 截图留档于 `docs/`（或附在完成说明）。
+
+### 验收标准（可判定的完成标准）
+
+每条都应能被 agent-browser 截图客观判定：
+
+- [ ] chat 页闭环步骤按 `step` / `tools` / `source` / `observation_summary` 正确展示，`injection_suspected`
+      时有"疑似注入"标记；单次路径（steps 为空）不渲染该面板。
+- [ ] `suggested_actions` 面板只**预填**输入框 + 勾选 approved，**不自动发起任何请求**（截图前后
+      网络面板无新请求 / 结果区不变）。
+- [ ] `detail_redacted` 存在时显示脱敏徽标。
+- [ ] 无 operator/admin 令牌时，metrics 与 alerts 页显示"需 operator/admin 令牌"权限提示态（非错误红字）。
+- [ ] `monitor status` 无需令牌即可查看。
+- [ ] 页面刷新、切换、空数据、`403`、网络失败 均有稳定 UI（无未捕获异常、无 `[object Object]`、
+      无 `NaN%`）。
+- [ ] agent-browser 截图通过：不出现文本溢出和布局错位。
 
 ## 7. 不变量 / 约束
 
