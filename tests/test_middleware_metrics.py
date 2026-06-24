@@ -6,7 +6,14 @@ from unittest import mock
 from fastapi.testclient import TestClient
 
 import backend.main as main
+from backend.observability.metrics import get_metrics
 from backend.security.rate_limit import ConcurrencyGate, RateLimiter
+
+
+class HeavyPathTest(unittest.TestCase):
+    def test_mcp_post_is_heavy(self):
+        self.assertTrue(main._is_heavy("POST", "/mcp"))
+        self.assertTrue(main._is_heavy("POST", "/mcp/"))
 
 
 class RateLimitMiddlewareTest(unittest.TestCase):
@@ -45,6 +52,7 @@ class ConcurrencyGateMiddlewareTest(unittest.TestCase):
         self.client = TestClient(main.app)
         self._orig_concurrency = main._concurrency
         self._orig_rate_limiter = main._rate_limiter
+        get_metrics().reset()
         main._rate_limiter = RateLimiter(limit_per_window=100, window_seconds=60)
         gate = ConcurrencyGate(1)
         gate.try_acquire()
@@ -53,11 +61,27 @@ class ConcurrencyGateMiddlewareTest(unittest.TestCase):
     def tearDown(self):
         main._concurrency = self._orig_concurrency
         main._rate_limiter = self._orig_rate_limiter
+        get_metrics().reset()
 
     def test_concurrency_cap_returns_503(self):
         body = {"query": "看系统状态"}
         resp = self.client.post("/api/agent/plan", json=body)
         self.assertEqual(resp.status_code, 503)
+        self.assertEqual(get_metrics().snapshot()["concurrency_rejected"], 1)
+
+
+class RequestMetricsMiddlewareTest(unittest.TestCase):
+    def setUp(self):
+        self.client = TestClient(main.app)
+        get_metrics().reset()
+
+    def tearDown(self):
+        get_metrics().reset()
+
+    def test_unknown_api_paths_are_bucketed(self):
+        self.client.get("/api/random0")
+        self.client.get("/api/random1")
+        self.assertEqual(get_metrics().snapshot()["requests"], {"/api/{unknown}": 2})
 
 
 class MetricsEndpointTest(unittest.TestCase):

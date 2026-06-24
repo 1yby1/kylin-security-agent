@@ -5,7 +5,7 @@ import time
 from collections import deque
 from typing import Callable
 
-from backend.security.auth import session_principal
+from backend.security.auth import is_known_token, session_principal
 
 
 class RateLimiter:
@@ -90,6 +90,6 @@ class ConcurrencyGate:
 
 def rate_limit_key(token: str | None, client_host: str | None) -> str:
     """Authenticated callers are keyed by principal; anonymous by client IP."""
-    if token:
+    if is_known_token(token):
         return session_principal(token)
     return f"ip:{client_host or 'unknown'}"

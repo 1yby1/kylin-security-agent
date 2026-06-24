@@ -72,11 +72,44 @@ _alert_store = AlertStore()
 _monitor_scheduler = MonitorScheduler(executor, _alert_store, _monitor_settings, audit)
 
 _HEAVY_PATHS = {"/api/agent/execute", "/api/agent/plan", "/api/security/evaluate"}
+_KNOWN_API_METRIC_PATHS = {
+    "/api/agent/execute",
+    "/api/agent/plan",
+    "/api/security/evaluate",
+    "/api/security/runtime",
+    "/api/alerts",
+    "/api/monitor/status",
+    "/api/llm/status",
+    "/api/llm/test",
+    "/api/tools",
+    "/api/mcp/tools",
+    "/api/audit/recent",
+    "/api/audit/verify",
+    "/api/audit/export",
+}
+
+
+def _is_mcp_path(path: str) -> bool:
+    return path == "/mcp" or path.startswith("/mcp/")
+
+
+def _metric_endpoint(path: str) -> str | None:
+    if path == "/api/metrics":
+        return None
+    if _is_mcp_path(path):
+        return "/mcp"
+    if path.startswith("/api/tools/") and path != "/api/tools":
+        return "/api/tools/{tool_name}"
+    if path.startswith("/api/"):
+        return path if path in _KNOWN_API_METRIC_PATHS else "/api/{unknown}"
+    return None
 
 
 def _is_heavy(method: str, path: str) -> bool:
     if method != "POST":
         return False
+    if _is_mcp_path(path):
+        return True
     if path in _HEAVY_PATHS:
         return True
     return path.startswith("/api/tools/") and path != "/api/tools"
@@ -85,8 +118,8 @@ def _is_heavy(method: str, path: str) -> bool:
 @app.middleware("http")
 async def rate_limit_middleware(request, call_next):
     path = request.url.path
-    if path.startswith("/api/") and path != "/api/metrics":
-        counted = "/api/tools/{tool_name}" if (path.startswith("/api/tools/") and path != "/api/tools") else path
+    counted = _metric_endpoint(path)
+    if counted:
         get_metrics().record_request(counted)
     if _rl_settings.enabled and _is_heavy(request.method, path):
         token = parse_bearer(request.headers.get("authorization"))
@@ -100,6 +133,7 @@ async def rate_limit_middleware(request, call_next):
                 headers={"Retry-After": str(_rate_limiter.retry_after(key))},
             )
         if not _concurrency.try_acquire():
+            get_metrics().record_concurrency_rejected()
             return JSONResponse(status_code=503, content={"detail": "服务繁忙，请稍后重试"})
         try:
             return await call_next(request)

@@ -32,6 +32,14 @@ def resolve_role(token: str | None, settings: AuthSettings | None = None) -> str
     return settings.default_role
 
 
+def is_known_token(token: str | None, settings: AuthSettings | None = None) -> bool:
+    """Return whether the token matches a server-configured credential."""
+    if not token:
+        return False
+    settings = settings or get_auth_settings()
+    return any(hmac.compare_digest(token, known) for known in settings.token_roles)
+
+
 def session_principal(token: str | None) -> str:
     """Stable per-token principal used to bind conversation sessions.
 

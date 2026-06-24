@@ -11,10 +11,12 @@ class MetricsCollectorTest(unittest.TestCase):
         m.record_request("/api/agent/plan")
         m.record_blocked()
         m.record_rate_limited()
+        m.record_concurrency_rejected()
         snap = m.snapshot()
         self.assertEqual(snap["requests"], {"/api/agent/execute": 2, "/api/agent/plan": 1})
         self.assertEqual(snap["blocked"], 1)
         self.assertEqual(snap["rate_limited"], 1)
+        self.assertEqual(snap["concurrency_rejected"], 1)
 
     def test_tool_percentiles_nearest_rank(self):
         m = MetricsCollector()

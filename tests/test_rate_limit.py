@@ -55,8 +55,13 @@ class ConcurrencyGateTest(unittest.TestCase):
 
 
 class RateLimitKeyTest(unittest.TestCase):
-    def test_token_uses_principal(self):
-        self.assertEqual(rate_limit_key("tok", "1.2.3.4"), session_principal("tok"))
+    def test_known_token_uses_principal(self):
+        with mock.patch.dict(os.environ, {"AGENT_OPERATOR_TOKEN": "tok"}, clear=True):
+            self.assertEqual(rate_limit_key("tok", "1.2.3.4"), session_principal("tok"))
+
+    def test_unknown_token_falls_back_to_ip(self):
+        with mock.patch.dict(os.environ, {"AGENT_OPERATOR_TOKEN": "known"}, clear=True):
+            self.assertEqual(rate_limit_key("random", "1.2.3.4"), "ip:1.2.3.4")
 
     def test_anon_uses_ip(self):
         self.assertEqual(rate_limit_key(None, "1.2.3.4"), "ip:1.2.3.4")

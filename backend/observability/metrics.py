@@ -14,6 +14,7 @@ class MetricsCollector:
         self._requests: dict[str, int] = defaultdict(int)
         self._blocked = 0
         self._rate_limited = 0
+        self._concurrency_rejected = 0
         self._tool_counts: dict[str, int] = defaultdict(int)
         self._tool_samples: dict[str, deque[float]] = defaultdict(self._new_sample_buffer)
         self._llm_success = 0
@@ -30,6 +31,10 @@ class MetricsCollector:
     def record_rate_limited(self) -> None:
         with self._lock:
             self._rate_limited += 1
+
+    def record_concurrency_rejected(self) -> None:
+        with self._lock:
+            self._concurrency_rejected += 1
 
     def record_blocked(self) -> None:
         with self._lock:
@@ -62,6 +67,7 @@ class MetricsCollector:
                 "requests": dict(self._requests),
                 "blocked": self._blocked,
                 "rate_limited": self._rate_limited,
+                "concurrency_rejected": self._concurrency_rejected,
                 "tools": tools,
                 "llm": {
                     "success": self._llm_success,
@@ -75,6 +81,7 @@ class MetricsCollector:
             self._requests.clear()
             self._blocked = 0
             self._rate_limited = 0
+            self._concurrency_rejected = 0
             self._tool_counts.clear()
             self._tool_samples.clear()
             self._llm_success = 0
