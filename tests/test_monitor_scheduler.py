@@ -29,6 +29,17 @@ class _NullAudit:
         pass
 
 
+class _AliveThread:
+    def __init__(self):
+        self.join_timeout = None
+
+    def join(self, timeout=None):
+        self.join_timeout = timeout
+
+    def is_alive(self):
+        return True
+
+
 def _settings(**kw):
     base = dict(enabled=True, interval_seconds=300, disk_percent=90, failed_login=20, auth_lines=100)
     base.update(kw)
@@ -67,11 +78,21 @@ class MonitorSchedulerRunOnceTest(unittest.TestCase):
         scheduler = MonitorScheduler(executor, store, _settings(), _NullAudit(), clock=lambda: 0.0)
         alerts = scheduler.run_once()  # must not raise
         self.assertEqual({a.source for a in alerts}, {"service"})
+        self.assertEqual(scheduler.status()["last_errors"], {"disk": "boom"})
+
+    def test_run_once_reports_all_tool_errors_in_status(self):
+        executor = FakeExecutor({}, raise_on={"disk", "service", "auth"})
+        scheduler = MonitorScheduler(executor, AlertStore(), _settings(), _NullAudit(), clock=lambda: 0.0)
+        self.assertEqual(scheduler.run_once(), [])
+        self.assertEqual(
+            scheduler.status()["last_errors"],
+            {"disk": "boom", "service": "boom", "auth": "boom"},
+        )
 
     def test_status_shape(self):
         scheduler = MonitorScheduler(FakeExecutor({}), AlertStore(), _settings(), _NullAudit())
         status = scheduler.status()
-        for key in ("enabled", "running", "interval_seconds", "last_run_at", "last_alert_count", "checks"):
+        for key in ("enabled", "running", "interval_seconds", "last_run_at", "last_alert_count", "last_errors", "checks"):
             self.assertIn(key, status)
         self.assertEqual(status["checks"], ["disk", "service", "auth"])
         self.assertFalse(status["running"])
@@ -92,6 +113,14 @@ class MonitorSchedulerLifecycleTest(unittest.TestCase):
         scheduler.stop()
         self.assertFalse(scheduler.running())
         self.assertGreaterEqual(len(store.recent()), 1)
+
+    def test_stop_keeps_alive_thread_reference_after_join_timeout(self):
+        scheduler = MonitorScheduler(FakeExecutor({}), AlertStore(), _settings(), _NullAudit())
+        fake_thread = _AliveThread()
+        scheduler._thread = fake_thread
+        scheduler.stop()
+        self.assertEqual(fake_thread.join_timeout, 5)
+        self.assertTrue(scheduler.running())
 
 
 if __name__ == "__main__":

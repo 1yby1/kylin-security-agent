@@ -31,6 +31,7 @@ class MonitorScheduler:
         self._thread: threading.Thread | None = None
         self._last_run_at: float | None = None
         self._last_alert_count = 0
+        self._last_errors: dict[str, str] = {}
 
     def _check_specs(self) -> list[tuple[str, dict[str, Any]]]:
         return [
@@ -42,6 +43,7 @@ class MonitorScheduler:
     def run_once(self) -> list[Alert]:
         trace_id = uuid4().hex
         outputs: dict[str, dict[str, Any]] = {}
+        errors: dict[str, str] = {}
         for tool, args in self._check_specs():
             try:
                 execution = self._executor.execute(
@@ -53,7 +55,9 @@ class MonitorScheduler:
                 )
                 outputs[tool] = execution.result.get(tool, {})
             except Exception as exc:  # noqa: BLE001 - one tool must not break the round
-                outputs[tool] = {"error": str(exc)}
+                message = str(exc)
+                outputs[tool] = {"error": message}
+                errors[tool] = message
         alerts = run_all_checks(outputs, self._settings)
         for alert in alerts:
             self._alert_store.add(alert)
@@ -67,6 +71,7 @@ class MonitorScheduler:
             )
         self._last_run_at = self._clock()
         self._last_alert_count = len(alerts)
+        self._last_errors = errors
         return alerts
 
     def start(self) -> None:
@@ -88,7 +93,8 @@ class MonitorScheduler:
         self._stop.set()
         if self._thread is not None:
             self._thread.join(timeout=5)
-            self._thread = None
+            if not self._thread.is_alive():
+                self._thread = None
 
     def running(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
@@ -100,5 +106,6 @@ class MonitorScheduler:
             "interval_seconds": self._settings.interval_seconds,
             "last_run_at": self._last_run_at,
             "last_alert_count": self._last_alert_count,
+            "last_errors": dict(self._last_errors),
             "checks": list(self.CHECK_TOOLS),
         }
