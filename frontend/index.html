@@ -312,7 +312,7 @@
             </article>
             <article class="panel">
               <header class="panel-header"><h2>端点请求</h2><span class="eyebrow">Requests</span></header>
-              <dl class="kv">
+              <dl class="kv kv-endpoints">
                 <template v-for="(count, ep) in metrics.requests" :key="ep"><dt>{{ ep }}</dt><dd>{{ count }}</dd></template>
               </dl>
               <p v-if="!Object.keys(metrics.requests || {}).length" class="empty-state">暂无请求</p>

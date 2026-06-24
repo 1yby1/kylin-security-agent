@@ -84,10 +84,10 @@ createApp({
       if (page === "dashboard" && !Object.keys(this.dashboard).length) this.loadDashboard();
       if (page === "tools" && !this.tools.length) this.loadTools();
       if (page === "audit" && !this.auditRecords.length) this.loadAudit();
-      if (page === "metrics" && !this.metricsError && metricsEmpty(this.metrics)) this.loadMetrics();
+      if (page === "metrics" && metricsEmpty(this.metrics)) this.loadMetrics();
       if (page === "monitor") {
         this.loadMonitorStatus();
-        if (!this.alertsError && !this.alerts.length) this.loadAlerts();
+        if (!this.alerts.length) this.loadAlerts();
       }
     },
     format(value) {

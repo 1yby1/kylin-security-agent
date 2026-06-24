@@ -884,6 +884,19 @@ pre {
   font-size: var(--text-xs);
 }
 
+/* --- 前端可视化：端点请求表（长路径 key 不与计数重叠） --- */
+.kv-endpoints {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+.kv-endpoints dt {
+  text-transform: none;
+  letter-spacing: 0;
+  overflow-wrap: anywhere;
+}
+.kv-endpoints dd {
+  text-align: right;
+}
+
 /* --- 前端可视化：指标看板条形 --- */
 .bar-row {
   display: grid;
