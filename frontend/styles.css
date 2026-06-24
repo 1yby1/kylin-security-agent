@@ -254,6 +254,8 @@ h3 { font-size: var(--text-base); }
   display: flex;
   align-items: center;
   gap: var(--space-3);
+  flex-wrap: wrap;
+  justify-content: flex-end;
   font-family: var(--font-mono);
   font-size: var(--text-xs);
   color: var(--color-text-secondary);
@@ -379,6 +381,12 @@ input:focus {
   max-width: 280px;
   padding: 9px 12px;
   font-size: var(--text-base);
+}
+
+.topbar-token {
+  flex: 0 1 240px;
+  max-width: 240px;
+  font-size: var(--text-sm);
 }
 
 button {

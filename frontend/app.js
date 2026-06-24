@@ -110,6 +110,23 @@ createApp({
       if (["blocked", "failed", "error"].includes(value)) return "error";
       return "unknown";
     },
+    stepTitle(step) {
+      if (step?.step !== undefined && step?.step !== null) return `第 ${step.step} 步`;
+      return step?.id || "步骤";
+    },
+    stepTools(step) {
+      if (Array.isArray(step?.tools)) return step.tools;
+      return step?.tool ? [step.tool] : [];
+    },
+    stepSource(step) {
+      return step?.source || step?.status || "";
+    },
+    stepStatus(step) {
+      return this.stageStatusClass(this.stepSource(step));
+    },
+    stepSummary(step) {
+      return step?.observation_summary || step?.message || step?.result?.error || "";
+    },
     async api(path, options = {}) {
       const headers = { ...(options.headers || {}) };
       if (this.token) headers["Authorization"] = `Bearer ${this.token}`;
